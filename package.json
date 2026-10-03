@@ -1,0 +1,15 @@
+{
+  "name": "agentlink",
+  "private": true,
+  "workspaces": [
+    "server",
+    "mcp"
+  ],
+  "scripts": {
+    "test": "npm -w server test && npm -w mcp test && node --test \"skills/agentlink/test/*.test.mjs\"",
+    "build": "npm -w server run build"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}

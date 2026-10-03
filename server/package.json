@@ -1,0 +1,13 @@
+{
+  "name": "@agentlink/server",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": { "fastify": "^5.2.0", "ws": "^8.18.0", "better-sqlite3": "^11.8.0", "ulid": "^2.3.0", "pino": "^9.6.0" },
+  "devDependencies": { "typescript": "^5.7.0", "vitest": "^3.0.0", "tsx": "^4.19.0", "@types/node": "^20.17.0", "@types/ws": "^8.5.0", "@types/better-sqlite3": "^7.6.0" }
+}

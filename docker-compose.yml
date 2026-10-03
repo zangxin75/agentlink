@@ -1,0 +1,48 @@
+services:
+  server:
+    build:
+      context: .
+      # 网络无法直达 GitHub Releases 时经 BSQ_MIRROR 指定 better-sqlite3 预编译镜像源
+      args:
+        BSQ_MIRROR: ${BSQ_MIRROR:-}
+    # 宿主 8080 已被既有服务占用，改 8090（仅直连调试用；域名流量走 caddy -> server:8080 内网）
+    ports: ["18080:8080"]
+    # 优雅停机需等在途长轮询（wait≤30s）收尾；docker 默认 10s 后 SIGKILL 会砍掉收尾，故放宽到 35s
+    stop_grace_period: 35s
+    ulimits:
+      nofile: 65536
+    environment:
+      REGISTRATION_CODE: ${REGISTRATION_CODE:?set REGISTRATION_CODE in .env}
+      DB_PATH: /data/agentlink.db
+      # RATE_LIMIT_* 从宿主透传（压测场景放宽注册限流：RATE_LIMIT_REGISTER_PER_HOUR=6000）
+      RATE_LIMIT_REGISTER_PER_HOUR: ${RATE_LIMIT_REGISTER_PER_HOUR:-10}
+      RATE_LIMIT_MESSAGE_PER_MIN: ${RATE_LIMIT_MESSAGE_PER_MIN:-60}
+      RATE_LIMIT_TASK_PER_MIN: ${RATE_LIMIT_TASK_PER_MIN:-20}
+      RATE_LIMIT_HISTORY_PER_MIN: ${RATE_LIMIT_HISTORY_PER_MIN:-120}
+    volumes: [data:/data]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  backup:
+    image: alpine:3.20
+    restart: unless-stopped
+    command: >
+      sh -c "apk add --no-cache sqlite >/dev/null &&
+             while true; do
+               sqlite3 /data/agentlink.db \".backup '/backup/agentlink-'$$(date +%Y%m%d%H%M)'.db'\";
+               find /backup -name '*.db' -mtime +7 -delete;
+               sleep 3600;
+             done"
+    volumes: [data:/data, backup:/backup]
+    depends_on: [server]
+  caddy:
+    image: caddy:2-alpine
+    profiles: [tls]
+    environment:
+      AGENTLINK_DOMAIN: ${AGENTLINK_DOMAIN:?set AGENTLINK_DOMAIN in .env}
+    ports: ["443:443", "80:80"]
+    volumes: [./deploy/Caddyfile:/etc/caddy/Caddyfile, caddy_data:/data, caddy_config:/config]
+    depends_on: [server]
+volumes: { data: {}, backup: {}, caddy_data: {}, caddy_config: {} }
