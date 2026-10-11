@@ -1,0 +1,15 @@
+# AgentLink 本地守护（用户级 systemd unit）
+# 安装：cp deploy/agentlink-daemon.service ~/.config/systemd/user/
+#       systemctl --user daemon-reload && systemctl --user enable --now agentlink-daemon
+# 注意：ExecStart 路径按实际 checkout 调整（%h = 当前用户 HOME）
+[Unit]
+Description=AgentLink daemon (WS 收信 → spool → Stop hook 注入)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env node %h/imchat/skills/agentlink/daemon.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
