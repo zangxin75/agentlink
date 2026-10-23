@@ -50,9 +50,15 @@ test('im ack：服务端返回 {acked:[]} → 输出「已在早前投递时确�
   })
   const port = await new Promise(r => http.listen(0, () => r(http.address().port)))
   writeFileSync(join(cfg, 'agents.d', 'w.env'), `AGENTLINK_NAME=w\nAGENTLINK_DIR=/work\nAGENTLINK_SERVER=http://127.0.0.1:${port}\nAGENTLINK_TOKEN=t\n`)
-  const stdout = await new Promise((ok, err) => execFile(process.execPath, [join(import.meta.dirname, '..', 'im.mjs'), 'ack', 'zz1'], {
-    env: { ...process.env, AGENTLINK_CONFIG: cfg, AGENTLINK_STATE: state },
-  }, (e, so, se) => e ? err(e) : ok(so + se)))
-  http.close()
-  assert.ok(stdout.includes('已在早前投递时确认'), stdout)
+  // 密闭性：子进程用 AGENTLINK_SERVER/TOKEN 直连本测试服务器——不能依赖宿主 ~/.agentlink
+  // 或 agents.d 的 cwd 匹配（本测试 cwd 不在 AGENTLINK_DIR=/work 下，CI 无配置即 die）。
+  // try/finally：断言失败也要 close，否则监听中的 http server 挂住事件循环（CI 曾挂 6h）
+  try {
+    const stdout = await new Promise((ok, err) => execFile(process.execPath, [join(import.meta.dirname, '..', 'im.mjs'), 'ack', 'zz1'], {
+      env: { ...process.env, AGENTLINK_CONFIG: cfg, AGENTLINK_STATE: state, AGENTLINK_SERVER: `http://127.0.0.1:${port}`, AGENTLINK_TOKEN: 't' },
+    }, (e, so, se) => e ? err(e) : ok(so + se)))
+    assert.ok(stdout.includes('已在早前投递时确认'), stdout)
+  } finally {
+    http.close()
+  }
 })
