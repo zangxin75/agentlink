@@ -26,11 +26,18 @@ test('匹配 cwd → 纯文本注入（含不可信框定头），runHook 不认
   assert.deepEqual(unreadList(idW).map(m => m.id), ['m1']) // 尚未认领
 })
 
-test('不匹配 cwd / 空收件箱 → null 静默', async () => {
+test('不匹配 cwd → null 静默；空收件箱 + 24h 内有后台已处理 → 提示一次（zhy UX 建议）', async () => {
   assert.equal(await runHook({ cwd: '/elsewhere', hostname: 'testhost' }), null)
-  // 认领后再跑：无未读 → null（会话内重复触发不重复注入）
+  // 认领后再跑：无未读，但 m1 刚被后台/hook 处理 → 提示"后台已处理 N 封"，不重复注入正文
   claimIds(idW, [['_default', 'm1']])
   assert.equal(unreadList(idW).length, 0)
+  const r = await runHook({ cwd: '/work', hostname: 'testhost' })
+  assert.ok(r)
+  assert.ok(r.text.includes('后台已处理 1 封'))
+  assert.ok(r.text.includes('im history'))
+  assert.ok(!r.text.includes('deploy done')) // 不重复注入正文
+  assert.deepEqual(r.ids, []) // 无信可认领
+  // 幂等：同一条已处理消息只提示一次，之后回归静默
   assert.equal(await runHook({ cwd: '/work', hostname: 'testhost' }), null)
 })
 

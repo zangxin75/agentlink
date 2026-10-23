@@ -10,8 +10,8 @@
 |---|---|---|---|
 | C1 | T2 端口不可达方案死路 | **落实** | 计划 Step 1 改用本文件既有 `mockServer` harness，handler 在 auth_ok 后发 `{op:'error',code:'AUTH_FAILED'}` + `close(4003)`——与 `daemon.test.mjs:105-121` 场景 A 同形态，恰好驱动 `daemon.mjs:67`。harness 签名 `mockServer(hand, restHandler)` 与 `{messages:[]}` 用法核对一致；`envFile(dir,name,token,port)` 四参调用正确；`(dev)` 期望与 checkout 无 VERSION 文件的事实一致 |
 | C2 | 重跑断言串不匹配 | **落实** | 断言改 `grep '已安装版本'` + `grep '旧版本'`；install.sh 输出 `>> 已安装版本: $OLD / 目标: $VERSION`（首次安装也打印，注释已说明）与 `>> 安装完成: $NEW（旧版本: $OLD）`——两串均逐字存在 |
-| C3 | host-swap 正则不匹配 | **落实** | 正则改 `class="host-swap">[^<]*<\/span>\.im.example.com\/download\/install\.(sh\|ps1)`，与计划 HTML `</span>.im.example.com/download/install.sh` 逐字匹配（核对实际 index.html 的 `<span class="host-swap">` 形态，205 行 `hostSwap()` 同构） |
-| C4 | 门禁代码自相矛盾 | **落实** | build（Step 3）与 test（第 3 节）两处代码块均定义并使用 `PATTERNS_INSTALL`（无 im.example.com 项）；tarball 树用全量 PATTERNS。全量清单与 `publish-public.sh:33` 逐字一致（已核对）；"由实现收敛"悬空注释已删除 |
+| C3 | host-swap 正则不匹配 | **落实** | 正则改 `class="host-swap">[^<]*<\/span>\.tokeneff\.com\/download\/install\.(sh\|ps1)`，与计划 HTML `</span>.tokeneff.com/download/install.sh` 逐字匹配（核对实际 index.html 的 `<span class="host-swap">` 形态，205 行 `hostSwap()` 同构） |
+| C4 | 门禁代码自相矛盾 | **落实** | build（Step 3）与 test（第 3 节）两处代码块均定义并使用 `PATTERNS_INSTALL`（无 tokeneff.com 项）；tarball 树用全量 PATTERNS。全量清单与 `publish-public.sh:33` 逐字一致（已核对）；"由实现收敛"悬空注释已删除 |
 | M1 | git archive 不含未提交 contrib | **落实** | Step 4 改为先 `git add skills/agentlink/contrib && git commit` 再跑测试（r1 推荐方案①） |
 | M2 | SKILL 注册码断言不匹配 | **落实** | 断言 `注册码向你的 AgentLink 服务器管理员` 与 sed `5i` 插入文本 `> 注册码向你的 AgentLink 服务器管理员（即你的所有者）索取；…` 逐字前缀一致；SKILL.md frontmatter 恰为 1-4 行，`5i` 落点正确 |
 | M3 | 跨文件系统 mv 非原子 | **落实** | install.sh：`PARENT=$(dirname …); mkdir -p; UNPACK=$(mktemp -d "$PARENT/.al-install-XXXX")`；install.ps1：`$Unpack` 建在 `$Parent` 下——两者解包目录与目标同卷，下载缓存留系统 tmp |

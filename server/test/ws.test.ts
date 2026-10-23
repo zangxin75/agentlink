@@ -34,6 +34,36 @@ describe('ws hub', () => {
     expect((await next(ws, f => f.op === 'error')).code).toBe('AUTH_FAILED') // spec §9
     await new Promise(r => ws.on('close', r))
   })
+  it('审计 2026-10-21：auth.failed 写放大——同一坏 token 重复失败只落首条 audit（60s 窗采样合并）', async () => {
+    srv = await startWsServer()
+    const n = (srv.db.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE event='auth.failed'`).get() as any).n
+    for (let i = 0; i < 5; i++) await srv.app.inject({ method: 'GET', url: '/v1/inbox', headers: { authorization: 'Bearer al_bogus_repeat' } })
+    const after = (srv.db.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE event='auth.failed'`).get() as any).n
+    expect(after - n).toBe(1) // 同 token 采样合并，不逐请求写库
+    await srv.app.inject({ method: 'GET', url: '/v1/inbox', headers: { authorization: 'Bearer al_bogus_other' } })
+    const after2 = (srv.db.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE event='auth.failed'`).get() as any).n
+    expect(after2 - after).toBe(1) // 不同 token 首次仍记录
+  })
+  it('审计 2026-10-21：WS send 向不存在的 agent → AGENT_NOT_FOUND error 帧，不落库', async () => {
+    srv = await startWsServer()
+    const { token } = srv.mk('alice.dev')
+    const ws = await open(srv.url, token)
+    await next(ws, f => f.op === 'auth_ok')
+    const before = (srv.db.prepare(`SELECT COUNT(*) AS n FROM messages`).get() as any).n
+    ws.send(JSON.stringify({ op: 'send', to: 'nobody.here', body: { text: 'hi' }, client_msg_id: 'cmid-ghost-1' }))
+    expect((await next(ws, f => f.op === 'error' && f.code === 'AGENT_NOT_FOUND')).code).toBe('AGENT_NOT_FOUND')
+    const after = (srv.db.prepare(`SELECT COUNT(*) AS n FROM messages`).get() as any).n
+    expect(after).toBe(before) // 未投递目标不落垃圾行
+    ws.close()
+  })
+  it('审计 2026-10-21：WS 帧超 maxPayload(1MiB) → 服务端关闭连接', async () => {
+    srv = await startWsServer()
+    const { token } = srv.mk('alice.dev')
+    const ws = await open(srv.url, token)
+    await next(ws, f => f.op === 'auth_ok')
+    ws.send('x'.repeat(2 * 1024 * 1024)) // 超限帧：ws 库按 maxPayload 拒收并 close(1009)
+    await new Promise(r => ws.on('close', r))
+  })
   it('方案B：认证后一次性补发离线期间的未确认收件箱', async () => {
     srv = await startWsServer()
     const a = srv.mk('alice.dev'), b = srv.mk('bob.ops')

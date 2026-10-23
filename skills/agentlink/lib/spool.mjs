@@ -26,7 +26,8 @@ export function writeMessage(agentId, msg) {
   if (exists(join(d, 'consumed', msg.id + '.json')) || exists(final)) return false // consumed 不复活(本 topic 目录内判定,RF2)
   const tmp = join(d, msg.id + '.tmp')
   writeFileSync(tmp, JSON.stringify({ ...msg, topic, received_at: Date.now() }), { mode: 0o600 })
-  try { renameSync(tmp, final); return true } catch { unlinkSync(tmp); return false }
+  // 审计 2026-10-20：清理 tmp 自身也可能 ENOENT（升级窗口双 daemon 跨进程竞态）——包 try 不让 selfHeal 兜底常态
+  try { renameSync(tmp, final); return true } catch { try { unlinkSync(tmp) } catch { /* tmp 已被清 */ } return false }
 }
 export function unreadList(agentId, topic = '_default') {
   const d = spoolDir(agentId, topic)
@@ -58,6 +59,21 @@ export function cleanup(agentId, nowMs) {
     const p = join(consumedDir(agentId, t), f)
     if (nowMs - (read1(p).received_at ?? 0) > 7 * 86400_000) unlinkSync(p)
   }
+}
+export function recentConsumed(agentId, windowMs = 24 * 3600_000) {
+  // 空收件箱提示（zhy UX 建议 2026-10-21）：统计窗口内 consumed 的信数与最新 received_at
+  // 只读扫描，不建目录（topics() 对不存在的 spool 根返回 []）
+  let count = 0, latest = 0
+  for (const t of topics(agentId)) {
+    let files = []
+    try { files = readdirSync(consumedDir(agentId, t)) } catch { continue }
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue
+      let received = 0; try { received = read1(join(consumedDir(agentId, t), f)).received_at ?? 0 } catch { continue }
+      if (received > Date.now() - windowMs) { count++; if (received > latest) latest = received }
+    }
+  }
+  return { count, latest }
 }
 export function clearTmp(agentId) {
   for (const t of topics(agentId)) for (const f of readdirSync(spoolDir(agentId, t))) if (f.endsWith('.tmp')) unlinkSync(join(spoolDir(agentId, t), f))

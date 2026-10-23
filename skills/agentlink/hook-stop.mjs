@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { hostname as osHostname } from 'node:os'
-import { agentIdFor, parseEnvFile, matchAgentForCwd, AGENTS_DIR } from './lib/identity.mjs'
+import { agentIdFromEnv, parseEnvFile, matchAgentForCwd, AGENTS_DIR } from './lib/identity.mjs'
 import { unreadListMulti, claim } from './lib/spool.mjs'
 import { projectTopics } from './lib/topics.mjs'
 import { formatInjection } from './lib/inject.mjs'
@@ -16,15 +16,21 @@ export async function runHook({ cwd, hostname = osHostname() }) {
   }).filter(Boolean) } catch { return null } // agents.d 不存在：no-op
   const e = matchAgentForCwd(entries, cwd)
   if (!e) return null
-  const agentId = agentIdFor(e.name, hostname, e.dir)
+  const agentId = agentIdFromEnv(e, hostname)
   // critic-H1：claim 签名双参化后，Stop 注入只消费本项目声明的 topics + _default（spec §6）
   const msgs = unreadListMulti(agentId, [...new Set([...projectTopics(cwd), '_default'])])
   if (!msgs.length) return null
-  return { decision: 'block', reason: formatInjection(msgs), agentId, items: msgs.map(m => ({ topic: m.topic ?? '_default', id: m.id })) } // 不认领
+  return { decision: 'block', reason: formatInjection(msgs), agentId, server: e.server, token: e.token, items: msgs.map(m => ({ topic: m.topic ?? '_default', id: m.id })) } // 不认领
 }
 
-export function claimIds(agentId, items) {
-  for (const { topic, id } of items) { try { claim(agentId, topic, id) } catch { /* ENOENT：并发输家，静默 */ } }
+export async function claimIds(agentId, items, { server, token, fetchImpl = fetch } = {}) {
+  // v3 §3(b)：claim 成功后异步补 POST /v1/messages/:id/read，失败静默（read_at 只由 read 端点写，ack 不写）
+  const claimed = []
+  for (const { topic, id } of items) { try { if (claim(agentId, topic, id)) claimed.push(id) } catch { /* ENOENT：并发输家，静默 */ } }
+  if (server && token) for (const id of claimed)
+    fetchImpl(`${server.replace(/\/$/, '')}/v1/messages/${id}/read`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000),
+    }).catch(() => {})
 }
 
 if (process.argv[1] && process.argv[1].endsWith('hook-stop.mjs')) {
@@ -33,7 +39,7 @@ if (process.argv[1] && process.argv[1].endsWith('hook-stop.mjs')) {
   const r = await runHook({ cwd: input.cwd ?? process.cwd() })
   if (r) {
     console.log(JSON.stringify({ decision: r.decision, reason: r.reason })) // 先打印
-    claimIds(r.agentId, r.items)                                           // 后认领（topic+id 对，T3 双参 claim）
+    await claimIds(r.agentId, r.items, { server: r.server, token: r.token }) // 后认领（topic+id 对，含异步补 read）
   }
   // 无未读：空输出 exit 0，不污染 Claude Code
 }

@@ -10,3 +10,4 @@ data/
 web/download/
 .superpowers/
 web/onboarding.html
+.token-*

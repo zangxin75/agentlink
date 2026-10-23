@@ -1,6 +1,6 @@
 import type { Db } from './sqlite.js'
 
-export function migrate(db: Db): void {
+export function migrate(db: Db, opts: { defaultOwner?: string } = {}): void {
   db.exec(`
   CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
@@ -183,8 +183,101 @@ export function migrate(db: Db): void {
       db.prepare('PRAGMA user_version = 5').run()
     })()
   }
+  // v1.5 迁移：agent 身份持久化——identity key 与 recovery code 均只存 sha256（spec 2026-10-15-agent-identity）
+  if (v < 6) {
+    db.transaction(() => {
+      db.exec(`
+      ALTER TABLE agents ADD COLUMN identity_key_hash TEXT;
+      ALTER TABLE agents ADD COLUMN recovery_hash TEXT;
+      CREATE INDEX IF NOT EXISTS idx_agents_identity ON agents(identity_key_hash) WHERE identity_key_hash IS NOT NULL;
+      `)
+      db.prepare('PRAGMA user_version = 6').run()
+    })()
+  }
+  // v1.6 迁移：agent 间文件传输（设计 v3 .superpowers/reviews/2026-10-21-files-design-v3.md）
+  // blob 不进 DB；sha256 IS NULL = 上传未完成（in-flight 预留行，对账/配额语义见 core/files.ts）
+  if (v < 7) {
+    db.transaction(() => {
+      db.exec(`
+      CREATE TABLE IF NOT EXISTS files (
+        id TEXT PRIMARY KEY,
+        from_agent TEXT NOT NULL REFERENCES agents(id),
+        to_agent TEXT NOT NULL REFERENCES agents(id),
+        name TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        sha256 TEXT,
+        client_file_id TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_files_expiry ON files(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_files_from ON files(from_agent);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_files_idem ON files(from_agent, to_agent, client_file_id);
+      `)
+      db.prepare('PRAGMA user_version = 7').run()
+    })()
+  }
+  // v8 迁移：人类观测台+群聊（spec 2026-10-22-human-console-groupchat-design v4）
+  // role：'agent'|'human'|'group'（群=伪 agent）；owner：归属 human；messages.group_id：fanout 行群标记
+  if (v < 8) {
+    db.transaction(() => {
+      db.exec(`
+      ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'agent';
+      ALTER TABLE agents ADD COLUMN owner TEXT NOT NULL DEFAULT '';
+      ALTER TABLE messages ADD COLUMN group_id TEXT NOT NULL DEFAULT '';
+      CREATE TABLE IF NOT EXISTS groups (
+        id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS group_members (
+        group_id TEXT NOT NULL REFERENCES groups(id),
+        agent_id TEXT NOT NULL REFERENCES agents(id),
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (group_id, agent_id)
+      );
+      CREATE TABLE IF NOT EXISTS agent_notes (
+        human_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        note TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (human_id, agent_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id, id) WHERE group_id != '';
+      `)
+      db.prepare('PRAGMA user_version = 8').run()
+    })()
+  }
+  // v9 迁移：邮箱自助注册码（spec 2026-10-22-email-regcode-design.md §2）
+  if (v < 9) {
+    db.transaction(() => {
+      db.exec(`
+      CREATE TABLE IF NOT EXISTS registration_codes (
+        code TEXT PRIMARY KEY,
+        owner_agent_id TEXT NOT NULL,
+        email_norm TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_regcode_email ON registration_codes(email_norm);
+      CREATE TABLE IF NOT EXISTS email_verifies (
+        email_norm TEXT PRIMARY KEY,
+        secret_hash TEXT NOT NULL,
+        human_agent_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0
+      );
+      `)
+      db.prepare('PRAGMA user_version = 9').run()
+    })()
+  }
   // 系统账户：srv: 派生消息 from_agent='server' 受 messages FK 约束，须落一行 agents 记录；
   // 缺失会让 insertDerived 的 FOREIGNKEY 错被幂等兜底静默吞掉，所有 server 侧 srv 通知静默丢失（T6 发现）
   db.prepare(`INSERT OR IGNORE INTO agents (id, display_name, description, capabilities, task_policy, created_at, last_seen_at) VALUES ('server', 'AgentLink System', '', '[]', '{"mode":"closed","allowlist":[],"scope":"read-only"}', ?, ?)`)
     .run(new Date().toISOString(), new Date().toISOString())
+  // 回填放在 migrate 函数最末（server 系统行 INSERT 之后）、且在版本门之外（r1-C1）：
+  // 幂等、靠 WHERE owner='' 防覆盖——既覆盖「升级后才配 defaultOwner」的存量库，
+  // 也保证 migrate(db,{defaultOwner}) 单次首跑连 server 行一并回填；
+  // server 行 owner=defaultOwner 可接受（权限判定按 role，不看 owner）
+  if (opts.defaultOwner) db.prepare(`UPDATE agents SET owner=? WHERE owner=''`).run(opts.defaultOwner)
 }

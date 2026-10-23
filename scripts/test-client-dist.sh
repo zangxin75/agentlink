@@ -27,13 +27,16 @@ grep -q '^agentlink/VERSION$' "$TMP/list" && ok VERSION在 || bad 缺VERSION
 grep -q '^agentlink/vendor/ws/wrapper.mjs$' "$TMP/list" && ok vendor在 || bad 缺vendor
 grep -q '^agentlink/contrib/agentlink-daemon.service$' "$TMP/list" && ok contrib在 || bad 缺contrib
 grep -q '^agentlink/contrib/agentlink-daemon-startup.ps1$' "$TMP/list" && ok win自启脚本在 || bad 缺win自启脚本
+grep -q '^agentlink/contrib/agentlink-daemon-keepalive.ps1$' "$TMP/list" && ok win保活脚本在 || bad 缺win保活脚本
 if grep -qE '^agentlink/test/' "$TMP/list"; then bad "test/未被排除"; else ok test已排除; fi
 tar -xzf "$TARBALL" -C "$TMP"
+# win 保活 ps1 必须带 BOM（WinPS5.1 无 BOM 按 GBK 误读崩解析器）——须在解包后断言
+[ "$(head -c3 "$TMP/agentlink/contrib/agentlink-daemon-keepalive.ps1" | od -An -tx1 | tr -d ' \n')" = 'efbbbf' ] && ok win保活ps1-UTF8BOM || bad win保活ps1缺UTF8BOM（WinPS5.1 GBK误读）
 
-# 3. 敏感扫描零命中（tarball 侧全量清单；install 源文件用 INSTALL 清单——其默认域 im.example.com 是刻意公开信息，豁免；
+# 3. 敏感扫描零命中（tarball 侧全量清单；install 源文件用 INSTALL 清单——其默认域 tokeneff.com 是刻意公开信息，豁免；
 #    token 与内网 IP 项保留。两清单与 build 脚本逐字同源，r1 C4）
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
-PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117'
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
+PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117'
 if grep -rEn "$PATTERNS" "$TMP/agentlink" -q; then bad 敏感串命中tarball; else ok 敏感扫描零命中-tarball; fi
 if grep -rEn "$PATTERNS_INSTALL" scripts/install.sh scripts/install.ps1 -q 2>/dev/null; then bad 敏感串命中install; else ok 敏感扫描零命中-install; fi
 
@@ -49,6 +52,10 @@ grep -q '## 建立能力档案' "$SK" && ok SKILL建档节 || bad SKILL缺建档
 grep -q 'im\.mjs profile scan' "$SK" && ok SKILL三步引导 || bad SKILL缺三步引导   # brief 原文 'im profile scan' 在 sed 改写后不存在——dist 形态是 im.mjs profile scan（见任务报告偏差节）
 [ -f "$TMP/agentlink/lib/profile-prompt.md" ] && ok prompt模板在包 || bad 缺prompt模板
 grep -q '建立你的能力档案' scripts/install.sh && ok install建档提示 || bad install缺建档提示
+
+# 4d. 身份持久化断言（2026-10-15）：分发 im.mjs 必须带 --claim 找回与 identity bind
+grep -q -- '--claim' "$TMP/agentlink/im.mjs" && ok im支持--claim || bad im缺--claim
+grep -q 'identity/bind' "$TMP/agentlink/im.mjs" && ok im支持identity-bind || bad im缺identity-bind
 
 # 5. 裸目录冒烟（关键，spec §8）：无 checkout、无 node_modules，锁 vendor 自足性
 #    AGENTLINK_CONFIG/STATE 指向 $TMP——不污染真实 HOME（r1 m4；daemon 心跳/spool 默认落 ~/.local/state）
@@ -73,6 +80,9 @@ if AGENTLINK_DIST_BASE="http://127.0.0.1:$PORT" AGENTLINK_INSTALL_DIR="$INST" ru
    && [ -f "$INST/VERSION" ] && [ -f "$INST/vendor/ws/wrapper.mjs" ] && [ -f "$INST/contrib/agentlink-daemon.service" ]; then
   ok install装毕结构
 else bad install装毕结构失败; fi
+# 临时目录实装不得覆写全局启动器/锚点（缺陷报告 2026-10-20：tmp 试装把 ~/.local/bin/im 钉到 tmp 路径，测完 tmp 删除 → im 全命令瘫痪）
+if [ -f "$HOME/.local/bin/im" ] && grep -q "$INST" "$HOME/.local/bin/im"; then bad tmp实装覆写全局启动器; else ok tmp实装不碰全局启动器; fi
+grep -q "$INST" "$HOME/.claude/CLAUDE.md" 2>/dev/null && bad tmp实装写全局锚点 || ok tmp实装不写全局锚点
 # curl|bash 管道形态 + 变量经环境传入（Review Focus #2）
 if curl -fsSL "file://$PWD/scripts/install.sh" | env AGENTLINK_DIST_BASE="http://127.0.0.1:$PORT" AGENTLINK_INSTALL_DIR="$INST" bash >/dev/null 2>&1; then
   ok install管道形态可用
@@ -92,6 +102,8 @@ else ok 坏SUMS失败退出; fi
 [ ! -e "$BADINST" ] && ok 坏SUMS无半成品 || bad 坏SUMS留半成品
 # 安装器旧版保护/ps1 非目录检查（终审 minor 1/2）：mv 失败窗口无法不塞测试钩子地模拟，以结构断言钉死
 grep -q 'al-old' scripts/install.sh && grep -q 'al-old' scripts/install.ps1 && ok 安装器旧版保护 || bad 安装器缺旧版保护
+# daemon 保活（2026-10-15）：装机即注册（systemd Restart=always / win 计划任务），NO_KEEPALIVE 可跳过
+grep -q 'AGENTLINK_NO_KEEPALIVE' scripts/install.sh && grep -q 'agentlink-daemon-keepalive' scripts/install.ps1 && grep -q 'AGENTLINK_NO_KEEPALIVE' scripts/install.ps1 && ok 安装器保活注册 || bad 安装器缺保活注册
 grep -q '已存在且非目录' scripts/install.ps1 && ok ps1非目录检查 || bad ps1缺非目录检查
 # 用户实测反馈 4 缺陷（2026-10-01）：ps1 tar 退出码检查 / env 键名报错自描述 / daemon 自建 state 目录 / win 自启 contrib
 grep -q 'LASTEXITCODE' scripts/install.ps1 && ok ps1-tar退出码 || bad ps1-tar无退出码检查
@@ -107,8 +119,10 @@ kill $SRV_PID "$(cat "$TMP/badpid")" 2>/dev/null || true
 # 7. install.ps1 结构断言（spec §8：无 Windows CI 时静态核对；有 pwsh 加语法检查）
 PS=scripts/install.ps1
 # 首个可执行语句 = TLS1.2（Review Focus #5）
-FIRST=$(sed '1s/^\xEF\xBB\xBF//' "$PS" | grep -vE '^\s*(#|$)' | head -1)
-echo "$FIRST" | grep -q 'SecurityProtocol.*Tls12' && ok ps1首语句TLS12 || bad "ps1首语句非TLS12: $FIRST"
+# || true 防管道竞态 SIGPIPE：head -1 先退会把 grep 带崩（set -e+pipefail 下整个脚本 141 退出）
+FIRST=$(sed '1s/^\xEF\xBB\xBF//' "$PS" | grep -vE '^\s*(#|$)' | head -1 || true)
+# here-string 免管道：pipefail 下 echo|grep -q 命中即退会偶发 SIGPIPE(141) 崩脚本
+grep -q 'SecurityProtocol.*Tls12' <<<"$FIRST" && ok ps1首语句TLS12 || bad "ps1首语句非TLS12: $FIRST"
 grep -q 'AGENTLINK_DIST_BASE' "$PS" && grep -q 'AGENTLINK_VERSION' "$PS" && grep -q 'AGENTLINK_INSTALL_DIR' "$PS" && ok ps1三变量契约 || bad ps1缺变量契约
 grep -q 'Get-FileHash' "$PS" && ok ps1-GetFileHash || bad ps1缺Get-FileHash
 grep -qE 'tar -xzf|tar.*xzf' "$PS" && ok ps1-tar || bad ps1缺tar解压

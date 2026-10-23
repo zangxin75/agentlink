@@ -28,10 +28,10 @@ sed -i '5i\
 ' "$SK"
 
 # 3. 敏感扫描门禁——tar 压缩之前（spec §6；tarball 树用全量清单，与 publish-public.sh 逐字同源）。
-#    install 源文件用 INSTALL 清单：其默认域 im.example.com 是刻意公开信息（install 器就是从那下载），豁免
-#    im.example.com 单项；token 与内网 IP 项保留。tarball 内不含 install 源文件，产物树始终全量扫描，豁免不漏水（r1 C4）。
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
-PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117'
+#    install 源文件用 INSTALL 清单：其默认域 agentlink.tokeneff.com 是刻意公开信息（install 器就是从那下载），豁免
+#    tokeneff.com 单项；token 与内网 IP 项保留。tarball 内不含 install 源文件，产物树始终全量扫描，豁免不漏水（r1 C4）。
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
+PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117'
 if grep -rEn "$PATTERNS" "$STAGE/tree" -q; then
   echo 'ABORT: 敏感串命中（客户端包是最高敏面）:' >&2
   grep -rEn "$PATTERNS" "$STAGE/tree" | head >&2; exit 1

@@ -6,7 +6,7 @@ services:
       args:
         BSQ_MIRROR: ${BSQ_MIRROR:-}
     # 宿主 8080 已被既有服务占用，改 8090（仅直连调试用；域名流量走 caddy -> server:8080 内网）
-    ports: ["18080:8080"]
+    ports: ["127.0.0.1:18080:8080"]
     # 优雅停机需等在途长轮询（wait≤30s）收尾；docker 默认 10s 后 SIGKILL 会砍掉收尾，故放宽到 35s
     stop_grace_period: 35s
     ulimits:
@@ -19,6 +19,18 @@ services:
       RATE_LIMIT_MESSAGE_PER_MIN: ${RATE_LIMIT_MESSAGE_PER_MIN:-60}
       RATE_LIMIT_TASK_PER_MIN: ${RATE_LIMIT_TASK_PER_MIN:-20}
       RATE_LIMIT_HISTORY_PER_MIN: ${RATE_LIMIT_HISTORY_PER_MIN:-120}
+      # 邮箱自助注册码（schema v9）：SMTP 发信 + 自助限流 + 管理吊销令牌
+      # 任一 SMTP_HOST/USER/PASSWORD 为空 → /v1/regcode/apply 返 503（自助通道整体关闭）
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      RATE_LIMIT_REGCODE_APPLY_IP: ${RATE_LIMIT_REGCODE_APPLY_IP:-3}
+      RATE_LIMIT_REGCODE_APPLY_EMAIL: ${RATE_LIMIT_REGCODE_APPLY_EMAIL:-2}
+      RATE_LIMIT_REGCODE_VERIFY_IP: ${RATE_LIMIT_REGCODE_VERIFY_IP:-10}
+      # 未设置时 /v1/market 下架与 /v1/regcode 吊销端点一律 403（恒拒绝）
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       DOWNLOAD_DIR: /web/download
     volumes: [data:/data, ./web:/web:ro]
     healthcheck:

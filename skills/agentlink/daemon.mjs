@@ -5,30 +5,46 @@ import { spawn } from 'node:child_process'
 import { join, dirname, basename } from 'node:path'
 import { hostname as osHostname } from 'node:os'
 import WebSocket from './vendor/ws/wrapper.mjs'
-import { parseEnvFile, agentIdFor, AGENTS_DIR, HEARTBEAT, httpBase, wsUrl } from './lib/identity.mjs'
+import { parseEnvFile, agentIdFromEnv, AGENTS_DIR, HEARTBEAT, httpBase, wsUrl } from './lib/identity.mjs'
 import { writeMessage, maxCursor, cleanup, clearTmp } from './lib/spool.mjs'
+import { SPOOL_ROOT } from './lib/identity.mjs'
+import { existsSync } from 'node:fs'
 import { autoUpgradeOnce, restartDaemon } from './lib/upgrade.mjs'
 import { createWatcher, clampInterval, marketWakeAllowed } from './lib/market-watch.mjs'
+import { acquireLock, releaseLock, installSelfHeal, ensureKeepalive } from './lib/keepalive.mjs'
 
 const log = (...a) => console.log(new Date().toISOString(), ...a)
 
 const VERSION = (() => { try { return readFileSync(new URL('./VERSION', import.meta.url), 'utf8').trim() } catch { return '(dev)' } })() // T3 构建脚本写入；checkout 开发态缺失显示 (dev)
 const vlog = (...a) => log(`daemon VERSION=${VERSION}:`, ...a) // 协议级失败专用：错配不静默（spec §2）
 
-export function createDaemon({ agentsDir = AGENTS_DIR, hostname = osHostname(), spawn: spawnImpl = spawn, watcher, watchBaseMs = 60_000, loadMs = 10_000 } = {}) {
+export function createDaemon({ agentsDir = AGENTS_DIR, hostname = osHostname(), spawn: spawnImpl = spawn, watcher, watchBaseMs = 60_000, loadMs = 10_000, lockPath = null } = {}) {
   const conns = new Map() // agentId -> { ws, envPath, mtime, backoff, entry, authFailed }
   const lastWake = new Map() // agentId -> ms
   let stopped = false
 
   // 收信唤醒（方案 A）：新信落盘后按 env 配置拉起 headless 会话——cwd=绑定目录，SessionStart hook 自动注入 spool 未读
-  // WAKE_CMD 未配置即静默（默认安全档=维持现状）；WAKE_FROM 白名单缺省放行所有发送方；COOLDOWN 合并突发（冷却期内的后续信由被唤醒会话的注入一并带走）
+  // WAKE_CMD 未配置即静默；WAKE_FROM 白名单未配置 → 一律不唤醒（审计 2026-10-21 安全档默认，见 maybeWake 内注释）；COOLDOWN 合并突发
+  function wakeHintOnce(agentId, from) {
+    // 一次性提示（审计 2026-10-21）：首封被安全档拦下的信落一条本地未读，告知如何开闸唤醒
+    try {
+      const spoolAgentDir = join(SPOOL_ROOT, agentId)
+      const marker = join(spoolAgentDir, 'wake-hint-shown')
+      if (existsSync(marker)) return
+      mkdirSync(spoolAgentDir, { recursive: true })
+      writeFileSync(marker, String(Date.now()))
+      writeMessage(agentId, { id: `wake_hint_${Date.now()}`, from: 'agentlink', thread_id: null, type: 'text', topic: '_default', received_at: Date.now(), body: { text: `收到来自 ${from} 的信，但未配置 AGENTLINK_WAKE_FROM 白名单，已按安全默认不唤醒会话；如需自动处理来信，请在 daemon env 加 AGENTLINK_WAKE_FROM=<发送方id>（多个逗号分隔）` } })
+    } catch { /* spool 只读等场景静默 */ }
+  }
+
   function maybeWake(agentId, entry, from) {
     if (!entry.wakeCmd || stopped) return
-    if (from === 'market' && !marketWakeAllowed(entry)) return // 市场通知默认不唤醒：挂牌标题不可信，白名单显式含 market 才开闸（spec §3 r1-M2）
-    if (entry.wakeFrom) {
-      const allow = entry.wakeFrom.split(',').map(s => s.trim()).filter(Boolean)
-      if (allow.length && !allow.includes(from)) return
-    }
+    if (from === 'market' && !marketWakeAllowed(entry)) return // 市场通知默认不 wakeup：挂牌标题不可信，白名单显式含 market 才开闸（spec §3 r1-M2）
+    // 审计 2026-10-21 安全档默认：WAKE_FROM 未配置/空白名单 → 一律不唤醒。WAKE_CMD 常带 --dangerously-skip-permissions，
+    // 任意 peer 一条信即拉起无权限门 headless 会话的远程执行面必须显式开闸。首次拦截落一条本地提示（wakeHintOnce）。
+    const allow = (entry.wakeFrom ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    if (!allow.length) { wakeHintOnce(agentId, from); return }
+    if (!allow.includes(from)) return
     const cooldown = Number(entry.wakeCooldown) > 0 ? Number(entry.wakeCooldown) : 60_000
     const now = Date.now()
     if (now - (lastWake.get(agentId) ?? 0) < cooldown) return
@@ -52,7 +68,7 @@ export function createDaemon({ agentsDir = AGENTS_DIR, hostname = osHostname(), 
       let entry
       try { entry = { ...parseEnvFile(readFileSync(p, 'utf8')), mtime: statSync(p).mtimeMs, envPath: p } }
       catch (e) { log(`skip ${f}: ${e.message}`); continue } // RF5：坏文件不炸进程
-      const agentId = agentIdFor(entry.name, hostname, entry.dir)
+      const agentId = agentIdFromEnv(entry, hostname)
       const old = conns.get(agentId)
       if (old && old.mtime === entry.mtime && !old.authFailed) continue
       if (old) { try { old.ws.close(1000) } catch {} ; conns.delete(agentId); mkt.reset(agentId) } // token 换了或 auth 失败后 env 已改：重连 + 恢复该 agent 守望（401 停止集/缓存清空）
@@ -122,7 +138,8 @@ export function createDaemon({ agentsDir = AGENTS_DIR, hostname = osHostname(), 
     if (!entry || entry.autoUpgrade === '0') return
     try {
       const v = await autoUpgradeOnce({ server: entry.server, envBase: entry.distBase, autoUpgradeEnabled: true, log })
-      if (v) { restartDaemon({ log }); process.exit(0) }
+      // 升级重启前先放锁：新 daemon 启动取锁在老进程退出之后毫秒级完成——先 spawn 后放锁会撞锁秒退
+      if (v) { if (lockPath) { try { releaseLock(lockPath, process.pid) } catch {} } restartDaemon({ log }); process.exit(0) }
     } catch (e) { log(`autoupgrade: ${e.message}`) }
   }
   const autoupgradeTimer = setInterval(autoupgradeTick, 6 * 3_600_000)
@@ -158,8 +175,20 @@ export function createDaemon({ agentsDir = AGENTS_DIR, hostname = osHostname(), 
   }
 }
 if (process.argv[1]?.endsWith('daemon.mjs')) {
-  const d = createDaemon({})
+  // 保活三件套（2026-10-15）：单实例锁（外部保活/手工重复拉起幂等，双开防）→ 进程自愈（uncaught 不崩）
+  // → 注册刷新（存量机器靠 6h 自升级拉起新 daemon.mjs，顺带把过期的 systemd unit 换成 Restart=always）
+  const lockPath = join(dirname(HEARTBEAT), 'daemon.lock')
+  try { mkdirSync(dirname(lockPath), { recursive: true }) } catch {} // 首启时 state 目录可能还不存在（裸目录冒烟/全新装机）
+  const held = acquireLock(lockPath, process.pid)
+  if (!held.ok) {
+    // holder=null 且带 error = 锁不可写（目录只读等）——宁可本轮不起也不双开，等下一轮保活拉起
+    log(held.error ? `锁不可写（${held.error}）——放弃本轮启动，等保活拉起` : `另一 daemon 已在运行（pid ${held.holder}）——保活拉起幂等退出`)
+    process.exit(0)
+  }
+  installSelfHeal(log)
+  ensureKeepalive({ log })
+  const d = createDaemon({ lockPath })
   log('agentlink-daemon up')
-  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, async () => { await d.stop(); process.exit(0) })
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, async () => { await d.stop(); releaseLock(lockPath, process.pid); process.exit(0) })
   setInterval(() => {}, 1 << 30) // 保活
 }

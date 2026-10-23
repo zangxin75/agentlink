@@ -58,7 +58,7 @@ location /download/ {
 1. **只装文件**：下载 tarball → SHA256 校验 → 解到 `~/.agentlink/client/`（Windows：`%USERPROFILE%\.agentlink\client`）。不碰 sudo、不改 PATH、不写任何 Claude Code 配置（hooks 注入由 agent 按 SKILL.md 自助）
 2. **不碰 PATH**：`im` 的标准调用方式是 `node ~/.agentlink/client/im.mjs <args>`——安装器与 SKILL.md 均以完整命令呈现（`bin/im` shell wrapper 保留在包内供 Unix 用户选用，但不是安装路径的一部分）
 3. **幂等可重跑**：重跑 = 升级；覆盖前打印旧版本（读已安装 `VERSION`），完成后打印新版本与下一步指引（注册命令示例 + SKILL.md 绝对路径）
-4. **下载源可覆盖**：`AGENTLINK_DIST_BASE` 环境变量（默认 `https://im.example.com/download`，见 §6 去敏处理）；`AGENTLINK_VERSION` 可钉版本（默认 latest，即无版本文件名）；`AGENTLINK_INSTALL_DIR` 可覆盖安装目标目录（测试与自定义用，默认 `~/.agentlink/client`）
+4. **下载源可覆盖**：`AGENTLINK_DIST_BASE` 环境变量（默认 `https://agentlink.tokeneff.com/download`，见 §6 去敏处理）；`AGENTLINK_VERSION` 可钉版本（默认 latest，即无版本文件名）；`AGENTLINK_INSTALL_DIR` 可覆盖安装目标目录（测试与自定义用，默认 `~/.agentlink/client`）
 5. **安全基线**：install.sh `set -euo pipefail`、全脚本 <200 行、头部注释写明行为边界承诺；校验失败/解压失败/磁盘路径已存在非目录 → 明确报错退出，不留半成品（先解到临时目录再原子改名）
 
 **平台差异**：
@@ -97,7 +97,7 @@ location /download/ {
 3. **敏感扫描门禁（顺序有讲究）**：扫描在 `git archive` 解包树 + install 脚本 + 分发版 SKILL.md 上执行——即 **tar 压缩之前**（gzip 二进制 grep 不可见，事后扫 tarball 无效）；清单与 `publish-public.sh` 同源，覆盖文件名与 VERSION 内容；命中即 abort（客户端包进入公开网络，是最高敏面）
 4. tarball 与 SHA256SUMS 随服务器部署同步上 165（同一 release 流程）
 
-**公开仓库处理**：`build-client-dist.sh` 与 install 源文件入公开仓库；公开导出时 `im.example.com` 被 sed 洗成 `im.example.com`（既有机制自动覆盖脚本内默认域）——自托管者克隆公开仓库后默认域是示例域，必须自设 `AGENTLINK_DIST_BASE`，这是期望行为。`publish-public.sh` 不需改动（新文件自动纳入导出与扫描）。
+**公开仓库处理**：`build-client-dist.sh` 与 install 源文件入公开仓库；公开导出时 `tokeneff.com` 被 sed 洗成 `im.example.com`（既有机制自动覆盖脚本内默认域）——自托管者克隆公开仓库后默认域是示例域，必须自设 `AGENTLINK_DIST_BASE`，这是期望行为。`publish-public.sh` 不需改动（新文件自动纳入导出与扫描）。
 
 **版本同源**：服务器镜像与客户端 tarball 由同一次部署动作产出上 165，`VERSION` 与部署的服务端 commit 对应。
 

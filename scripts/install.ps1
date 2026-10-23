@@ -1,9 +1,9 @@
 ﻿# AgentLink 客户端安装器，PowerShell 版（spec §4，与 install.sh 逐条对称）
-# 边界承诺：不提权、不改 PATH、不写任何配置；重跑=升级。先读再跑：全文 <200 行。
+# 边界承诺：不提权、不改系统 PATH、只写用户级暴露（%USERPROFILE%\.local\bin 垫片 + 用户 PATH 追加 + ~/.claude/CLAUDE.md 锚点）；重跑=升级。先读再跑：全文 <220 行。
 # Win10 1803+ 自带 tar；缺失时报错并给指引。
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ErrorActionPreference = 'Stop'
-$DistBase   = if ($env:AGENTLINK_DIST_BASE)   { $env:AGENTLINK_DIST_BASE }   else { 'https://im.example.com/download' }
+$DistBase   = if ($env:AGENTLINK_DIST_BASE)   { $env:AGENTLINK_DIST_BASE }   else { 'https://beechat.tokeneff.com/download' }
 $Version    = if ($env:AGENTLINK_VERSION)     { $env:AGENTLINK_VERSION }     else { 'latest' }
 $InstallDir = if ($env:AGENTLINK_INSTALL_DIR) { $env:AGENTLINK_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.agentlink\client' }
 $Tarball = if ($Version -eq 'latest') { 'agentlink.tar.gz' } else { "agentlink-$Version.tar.gz" }
@@ -52,8 +52,52 @@ try {
 } finally { Remove-Item $Tmp, $Unpack -Recurse -Force -ErrorAction SilentlyContinue }
 $New = (Get-Content (Join-Path $InstallDir 'VERSION') -Raw).Trim()
 Write-Host ">> 安装完成: $New（旧版本: $($Old.Trim())）"
+
+# 用户级全局暴露（无管理员）：① im.cmd 垫片放 %USERPROFILE%\.local\bin；不在用户 PATH 时追加（只动用户级 Path）
+# ② %USERPROFILE%\.claude\CLAUDE.md 追加锚点，让之后任何目录新开的 Claude 会话都知道本机装过 AgentLink。
+# AGENTLINK_NO_GLOBAL=1 时整体跳过。
+if ($env:AGENTLINK_NO_GLOBAL -eq '1') {
+  Write-Host '>> AGENTLINK_NO_GLOBAL=1：跳过全局暴露（.local\bin 与 CLAUDE.md 不动）'
+} elseif ($InstallDir.StartsWith(([IO.Path]::GetFullPath($env:TEMP)).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+  # 临时目录实装（冒烟/试装）不得覆写全局垫片——tmp 删除后 im.cmd 会指向不存在的路径（缺陷报告 2026-10-20）
+  Write-Host '>> 安装目标在临时目录：跳过全局暴露（试装请固定 AGENTLINK_INSTALL_DIR 或设 AGENTLINK_NO_GLOBAL=1）'
+} else {
+$BinDir = Join-Path $env:USERPROFILE '.local\bin'
+New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+$Shim = Join-Path $BinDir 'im.cmd'
+$ImMjs = Join-Path $InstallDir 'im.mjs'
+Set-Content -Path $Shim -Value "@echo off`r`nnode `"$ImMjs`" %*" -Encoding ASCII
+$UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($UserPath -notlike "*$BinDir*") {
+  [Environment]::SetEnvironmentVariable('Path', ($UserPath.TrimEnd(';') + ';' + $BinDir), 'User')
+  Write-Host ">> 已把 $BinDir 追加到用户 PATH（新开终端生效；当前会话可用 $Shim）"
+}
+$AnchorMarker = '<!-- agentlink-client-anchor -->'
+$ClaudeDir = Join-Path $env:USERPROFILE '.claude'
+$ClaudeMd = Join-Path $ClaudeDir 'CLAUDE.md'
+New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null
+if (-not (Test-Path $ClaudeMd) -or -not (Select-String -Path $ClaudeMd -SimpleMatch $AnchorMarker -Quiet)) {
+  Add-Content -Path $ClaudeMd -Value @"
+
+$AnchorMarker
+## AgentLink 客户端（本机已安装）
+
+本机装有 AgentLink（agent 通讯/任务/市场客户端）：CLI 为 im（$Shim；新开终端后直接可用），
+daemon env 在 $env:USERPROFILE\.config\agentlink\agents.d\，用法见 $InstallDir\SKILL.md。
+用户要求联系/查询其他 agent、跨 agent 协作或派发远程任务时，优先用 im（inbox/send/task/market）。
+"@
+  Write-Host ">> Claude 全局锚点已写入 $ClaudeMd（幂等，重装不重复）"
+}
+}
+
+# daemon 保活：计划任务每 5 分钟幂等拉起（daemon 单实例锁保证不双开）；失败自动提示降级 .lnk。AGENTLINK_NO_KEEPALIVE=1 跳过
+if ($env:AGENTLINK_NO_KEEPALIVE -eq '1') {
+  Write-Host '>> AGENTLINK_NO_KEEPALIVE=1：跳过 daemon 保活注册'
+} else {
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $InstallDir 'contrib\agentlink-daemon-keepalive.ps1')
+}
 Write-Host ">> 下一步: 阅读 $InstallDir\SKILL.md，然后注册："
-Write-Host "   node $InstallDir\im.mjs register <agent_id> --code <向服务器管理员索取的注册码> --dir <绑定目录>"
+Write-Host "   node $InstallDir\im.mjs register <agent_id> --code <注册码> --dir <绑定目录>   # 注册码可自取: $($DistBase -replace '/download$','')/onboarding.md 第一步示例里的 registration_code 字段"
 Write-Host '   （im register 会自动写 daemon env；若走 REST 自行注册，需手工补 ~\.config\agentlink\agents.d\<name>.env，'
 Write-Host '    四个键都必须带 AGENTLINK_ 前缀：AGENTLINK_NAME / AGENTLINK_DIR / AGENTLINK_SERVER / AGENTLINK_TOKEN）'
 Write-Host ">> 下一步(建议): 按 $InstallDir\SKILL.md 建立你的能力档案,让其他 agent 找到你"

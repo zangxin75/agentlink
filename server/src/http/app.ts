@@ -7,8 +7,11 @@ import { RateLimiter } from '../core/ratelimit.js'
 import { AppError } from './errors.js'
 import { authenticate } from './auth.js'
 import { registerAgentsRoutes, registerMeRoutes } from './routes/agents.js'
+import { registerRegcodeRoutes } from './routes/regcode.js'
 import { registerTokensRoutes } from './routes/tokens.js'
+import { registerIdentityRoutes } from './routes/identity.js'
 import { registerSendRoutes } from './routes/send.js'
+import { registerGroupRoutes } from './routes/groups.js'
 import { registerInboxRoutes } from './routes/messages.js'
 import { registerTaskRoutes } from './routes/tasks.js'
 import { registerDirectoryRoutes } from './routes/directory.js'
@@ -19,6 +22,7 @@ import { registerWebhookRoutes } from './routes/webhook.js'
 import { registerLedgerRoutes } from './routes/ledger.js'
 import { registerCreditsRoutes } from './routes/credits.js'
 import { registerMarketRoutes, registerFeedRoutes } from './routes/market.js'
+import { registerFileRoutes } from './routes/files.js'
 import { AUTH_MD } from './auth-md.js'
 
 export interface AppDeps { cfg: Config; db?: Db; bus?: Bus; limiter?: RateLimiter; onTokenRevoke?: (tokenId: string) => void; connectedAgents?: () => Set<string>; wsConnections?: () => number; webhook?: WebhookDispatcher }
@@ -27,6 +31,8 @@ const startedAt = Date.now()
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({ logger: { level: (process.env.LOG_LEVEL ?? 'info'), redact: ['req.headers.authorization'] } })
+  // octet-stream 直通原始流（v5 无 parseAs；bodyLimit 对直通路径不生效，长度防线在 /v1/files onRequest 三连检+Transform 兜底）
+  app.addContentTypeParser('application/octet-stream', (_req, stream, done) => done(null, stream))
   app.get('/healthz', async () => ({ status: 'ok', uptime_s: Math.round((Date.now() - startedAt) / 1000) }))
   // /download/*：客户端分发产物（tarball/latest-version/SHA256SUMS）——零依赖静态服务，路径仅允许单段文件名（防穿越）
   // DOWNLOAD_DIR 在容器内指向挂载卷（compose: ./web:/web:ro + DOWNLOAD_DIR=/web/download）
@@ -58,6 +64,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // Fastify 框架错误（content-type/JSON parse FST_ERR_CTP_* → 400；bodyLimit 超限 → 413）
     // 没有 validation 属性也不是 AppError，此前落入 500。通用文案，不透传内部细节。
     if (err.statusCode === 400) return reply.status(400).send({ error: { code: 'INVALID_REQUEST', message: 'invalid request' } })
+    if (err.statusCode === 415) return reply.status(415).send({ error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'unsupported media type' } })
     if (err.statusCode === 413) return reply.status(413).send({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'payload too large' } })
     reply.log.error(err)
     return reply.status(500).send({ error: { code: 'INTERNAL', message: 'internal error' } })
@@ -65,15 +72,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   if (deps.db) {
     const limiter = deps.limiter ?? new RateLimiter(deps.cfg.rate)
     registerAgentsRoutes(app, { db: deps.db, cfg: deps.cfg, limiter })
+    registerRegcodeRoutes(app, { db: deps.db, cfg: deps.cfg, limiter })
+    registerIdentityRoutes(app, { db: deps.db, cfg: deps.cfg, limiter, onRevoke: deps.onTokenRevoke })
     registerMeRoutes(app, { db: deps.db, cfg: deps.cfg, limiter })
     registerTokensRoutes(app, { db: deps.db, cfg: deps.cfg, onRevoke: deps.onTokenRevoke })
     registerDirectoryRoutes(app, { db: deps.db, cfg: deps.cfg, connectedAgents: deps.connectedAgents })
     registerPresenceRoutes(app, { db: deps.db, cfg: deps.cfg, connectedAgents: deps.connectedAgents })
     registerCreditsRoutes(app, { db: deps.db, cfg: deps.cfg, limiter })
-    registerFeedRoutes(app, { db: deps.db, limiter })
+    registerFileRoutes(app, { db: deps.db, cfg: deps.cfg, limiter })
+    registerFeedRoutes(app, { db: deps.db, cfg: deps.cfg, limiter })
     if (deps.webhook) registerWebhookRoutes(app, { db: deps.db, cfg: deps.cfg, limiter, webhook: deps.webhook })
     if (deps.bus) {
       registerSendRoutes(app, { db: deps.db, cfg: deps.cfg, bus: deps.bus, limiter })
+      registerGroupRoutes(app, { db: deps.db, cfg: deps.cfg, bus: deps.bus, limiter })
       registerInboxRoutes(app, { db: deps.db, cfg: deps.cfg, bus: deps.bus, limiter })
       registerTaskRoutes(app, { db: deps.db, cfg: deps.cfg, bus: deps.bus, limiter, webhook: deps.webhook })
       registerLedgerRoutes(app, { db: deps.db, cfg: deps.cfg, limiter })

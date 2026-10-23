@@ -9,6 +9,7 @@ import type { Config } from '../../config.js'
 import type { Bus } from '../../core/bus.js'
 import type { RateLimiter } from '../../core/ratelimit.js'
 import { getMarketFeed } from '../../core/market-feed.js'
+import { clientIp } from '../client-ip.js'
 
 // limit 查询参数数字校验（终审 Minor-3）：querystring 无 schema 时 Fastify 给原始字符串，NaN 落到 SQL 会 500
 function parseLimit(raw: unknown): number | undefined {
@@ -173,22 +174,13 @@ export function registerMarketRoutes(app: FastifyInstance, deps: { db: Db; cfg: 
 
 // —— 观察舱（spec 2026-10-11-a2amarket-observation-deck §3.1）——
 // feed 匿名接口：db tier 挂载（无 bus/鉴权），双层限流（每 IP XFF 末段 60/min + 全局 600/min）
-// 限流键取 XFF 最后一段：nginx proxy_add_x_forwarded_for 是追加语义，客户端自带伪造 XFF 时首段可轮换绕过，末段才是可信代理追加的真实来源
-function feedClientIp(req: FastifyRequest): string {
-  const raw = req.headers['x-forwarded-for']
-  const xff = Array.isArray(raw) ? raw.join(',') : raw
-  if (typeof xff === 'string' && xff.trim()) {
-    const parts = xff.split(',').map(s => s.trim()).filter(Boolean)
-    if (parts.length) return parts[parts.length - 1]
-  }
-  return req.socket.remoteAddress ?? 'unknown' // 无 XFF（本地/直连）回退
-}
+// feed 限流来源 IP 复用共享 clientIp（XFF 末段优先，反代下不塌缩）
 
-export function registerFeedRoutes(app: FastifyInstance, deps: { db: Db; limiter: RateLimiter }): void {
+export function registerFeedRoutes(app: FastifyInstance, deps: { db: Db; cfg: Config; limiter: RateLimiter }): void {
   void deps.db
   app.get('/v1/market/feed', async (req) => {
     deps.limiter.checkFeedGlobal()
-    deps.limiter.checkFeed(feedClientIp(req))
+    deps.limiter.checkFeed(clientIp(req, deps.cfg.trustedProxies))
     const limit = parseLimit((req.query as { limit?: string }).limit) ?? 50
     return { events: getMarketFeed(limit) }
   })

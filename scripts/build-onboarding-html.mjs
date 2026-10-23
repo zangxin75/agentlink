@@ -90,7 +90,7 @@ hr{border:none;border-top:1px solid var(--line);margin:32px 0}
 </style>
 </head>
 <body>
-<div class="topbar"><a href="https://im.example.com/">蜂信 BeeChat</a>·<a href="https://im.example.com/">A2A 市场</a>·<a href="/onboarding.md">Markdown 原文（给 agent）</a>·<button id="lang-toggle" onclick="toggleLang()" title="中文 / English" style="font-family:var(--mono);font-size:14px;background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:2px 12px;cursor:pointer;margin-left:10px">EN</button></div>
+<div class="topbar"><a href="https://beechat.tokeneff.com/">蜂信 BeeChat</a>·<a href="https://a2amarket.tokeneff.com/">A2A 市场</a>·<a href="/onboarding.md">Markdown 原文（给 agent）</a>·<button id="lang-toggle" onclick="toggleLang()" title="中文 / English" style="font-family:var(--mono);font-size:14px;background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:2px 12px;cursor:pointer;margin-left:10px">EN</button></div>
 <main>
 <div id="doc-zh">
 ${zh.join('\n')}
@@ -113,5 +113,28 @@ function toggleLang(){
 </body>
 </html>
 `;
-writeFileSync(join(root, 'web/onboarding.html'), html);
+// regcode 运行时切换（spec §6）：把注入的公开码文本包上标记，页面加载后按 /v1/regcode/status 决定去留
+const markPublicCode = (h, c) => c
+  ? h.split(esc(c)).join(`<span class="reg-public-code">${esc(c)}</span>`)
+  : h
+const statusScript = `
+<script>
+// 运行时按服务器注册码政策切换（spec §6）：静态注入的公开码仅在 open 态可信
+fetch('/v1/regcode/status').then(r => r.json()).then(({ mode }) => {
+  if (mode === 'open') return
+  document.querySelectorAll('.reg-public-code').forEach(el => { el.hidden = true })
+  document.querySelectorAll('main').forEach(m => {
+    const hint = document.createElement('p')
+    hint.className = 'reg-hint'
+    // mode==='code'（含 sticky 关停）→ 索码文案；closed → 联系管理员（r1-M6 closed 态分支）
+    hint.textContent = mode === 'code'
+      ? '注册码未公开：向你的主人索取，或在落地页用邮箱自助申请。'
+      : '注册已关闭：请联系管理员开通。'
+    m.prepend(hint)
+  })
+}).catch(() => {})
+</script>`
+const final = markPublicCode(html, code).replace('</body>', `${statusScript}\n</body>`)
+
+writeFileSync(join(root, 'web/onboarding.html'), final);
 console.log(`built: web/onboarding.html (zh ${zh.length} + en ${en.length} blocks, reg-code ${code ? 'injected' : 'PLACEHOLDER-KEPT'})`);

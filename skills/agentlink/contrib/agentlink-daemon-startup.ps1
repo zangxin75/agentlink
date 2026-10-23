@@ -7,6 +7,9 @@ $Lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'agentlink-daemon.lnk
 if ($Remove) {
   if (Test-Path $Lnk) { Remove-Item $Lnk -Force; Write-Host ">> 已移除自启动: $Lnk" }
   else { Write-Host '>> 未安装（无 .lnk 可移除）' }
+  # 顺带移除保活计划任务（若注册过）——一站式卸载
+  Unregister-ScheduledTask -TaskName 'agentlink-daemon-keepalive' -Confirm:$false -ErrorAction SilentlyContinue
+  Write-Host '>> 保活计划任务（如有）已一并移除: agentlink-daemon-keepalive'
   exit 0
 }
 $sh = New-Object -ComObject WScript.Shell

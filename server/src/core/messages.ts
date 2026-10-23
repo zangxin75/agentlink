@@ -2,11 +2,12 @@ import type { Db } from '../db/sqlite.js'
 import type { Bus } from './bus.js'
 import { Errors } from '../http/errors.js'
 import { newMsgId, sha256Hex } from './ids.js'
+import { FILE_ID_RE } from './files.js'
 import { audit } from './audit.js'
 
 export interface Message { id: string; client_msg_id: string; from: string; to: string; type: string; body: any; thread_id: string | null; topic: string; created_at: string; delivered_at: string | null; read_at: string | null }
 
-const COLS = 'id, client_msg_id, from_agent as `from`, to_agent as `to`, type, body, thread_id, topic, created_at, delivered_at, read_at'
+const COLS = 'id, client_msg_id, from_agent as `from`, to_agent as `to`, type, body, thread_id, topic, created_at, delivered_at, read_at, group_id'
 const rowToMsg = (r: any): Message => ({ ...r, body: JSON.parse(r.body) })
 
 export function getMessage(db: Db, id: string): Message {
@@ -20,10 +21,24 @@ export const THREAD_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/
 // topic 格式（spec §1）：保留名 _default 或小写风格 ≤32；_default=广播
 export const TOPIC_RE = /^(_default|[a-z0-9][a-z0-9._-]{0,31})$/
 
-export function sendMessage(db: Db, bus: Bus, from: string, input: { to: string; type: 'text'; body: { text: string }; client_msg_id: string; thread_id?: string | null; topic?: string }): { message: Message; deduplicated: boolean } {
+export function sendMessage(db: Db, bus: Bus, from: string, input: { to: string; type: 'text' | 'file'; body: { text?: string; file_id?: string; name?: string; size?: number; sha256?: string; note?: string }; client_msg_id: string; thread_id?: string | null; topic?: string }): { message: Message; deduplicated: boolean } {
   // 大小上限按字节（Buffer.byteLength）而非 UTF-16 码元计：CJK 载荷此前可 3 倍绕过（终审 Minor-5）
   if (Buffer.byteLength(JSON.stringify(input.body)) > 256 * 1024) throw Errors.payloadTooLarge('message body > 256KB')
-  if (Buffer.byteLength(input.body.text ?? '') > 64 * 1024) throw Errors.payloadTooLarge('text > 64KB')
+  let body: Record<string, unknown>
+  if (input.type === 'file') {
+    // file 分支：真伪精校在 core——查 files 行，自报元数据一律以库为准覆写（杀伪造）
+    const fid = input.body.file_id
+    if (typeof fid !== 'string' || !FILE_ID_RE.test(fid)) throw Errors.invalidRequest('body.file_id required')
+    const row = db.prepare('SELECT * FROM files WHERE id=?').get(fid) as { from_agent: string; to_agent: string; name: string; size: number; sha256: string | null; expires_at: string } | undefined
+    if (!row || row.sha256 == null || new Date(row.expires_at).getTime() <= Date.now()) throw Errors.invalidRequest('file not found / not ready / expired')
+    if (row.from_agent !== from || row.to_agent !== input.to) throw Errors.badRequest('FILE_RECIPIENT_MISMATCH', 'message.to must equal file recipient')
+    const note = input.body.note
+    if (note != null && Buffer.byteLength(note) > 4 * 1024) throw Errors.payloadTooLarge('note > 4KB')
+    body = { file_id: fid, name: row.name, size: row.size, sha256: row.sha256, ...(note != null ? { note } : {}) }
+  } else {
+    if (Buffer.byteLength(input.body.text ?? '') > 64 * 1024) throw Errors.payloadTooLarge('text > 64KB')
+    body = { text: input.body.text }
+  }
   // 64 字符限仅约束客户端 cmid；服务端自产 srv: 派生键最长 ~86 字符
   // （srv:task_<26>:status:COMPLETED:<agent_id32>，见 derive.ts），DB 列无长度约束，属设计内（终审 Minor-10）
   if (!input.client_msg_id || input.client_msg_id.length > 64) throw Errors.invalidRequest('client_msg_id required (1-64 chars)')
@@ -36,7 +51,7 @@ export function sendMessage(db: Db, bus: Bus, from: string, input: { to: string;
   const id = newMsgId(); const now = new Date().toISOString()
   try {
     db.prepare('INSERT INTO messages (id, client_msg_id, from_agent, to_agent, type, body, thread_id, topic, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(id, input.client_msg_id, from, input.to, 'text', JSON.stringify(input.body), threadId, topic, now)
+      .run(id, input.client_msg_id, from, input.to, input.type, JSON.stringify(body), threadId, topic, now)
   } catch (e) {
     // 并发同 (from, client_msg_id) 撞唯一索引 idx_messages_idem：返回已存在的那条，deduplicated
     if ((e as any)?.code?.startsWith('SQLITE_CONSTRAINT')) {
@@ -55,6 +70,14 @@ export function getInbox(db: Db, agentId: string, limit: number, threadId?: stri
   const th = threadId ? ' AND thread_id=?' : ''
   const tp = topic ? ' AND topic=?' : ''
   return (db.prepare(`SELECT ${COLS} FROM messages WHERE to_agent=? AND delivered_at IS NULL${th}${tp} ORDER BY id LIMIT ?`).all(...(threadId ? [agentId, threadId] : [agentId]), ...(topic ? [topic] : []), limit)).map(rowToMsg)
+}
+
+// 按内容找人（spec: 全文反查对话方）——只搜本人参与的会话，body LIKE 字面匹配（% _ \ 转义），倒序
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, m => '\\' + m)
+export function searchMessages(db: Db, agentId: string, q: { q: string; limit: number }): Message[] {
+  const rows = db.prepare(`SELECT ${COLS} FROM messages WHERE (from_agent=? OR to_agent=?) AND body LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`)
+    .all(agentId, agentId, `%${likeEscape(q.q)}%`, q.limit)
+  return rows.map(rowToMsg)
 }
 
 export function history(db: Db, agentId: string, q: { peer?: string; thread_id?: string; topic?: string; before?: string; after?: string; limit: number }): Message[] {

@@ -97,6 +97,7 @@
 | type | body 定义 | 说明 |
 |---|---|---|
 | `text` | `{ "text": string }`，≤64KB | 普通聊天 |
+| `file` | `{ "file_id", "name", "size", "sha256", "note?" ≤4KB }`（2026-10-22 v1.6 文件通道；仅 REST 可发，WS send op 保持 text-only；body 元数据由服务端以 files 行覆写，`message.to` 必须等于文件收件人否则 400 FILE_RECIPIENT_MISMATCH） | 文件引用消息，收件方以 `GET /v1/files/{id}` 取回 |
 | `task` | 任务请求体（§7.1） | 由 `POST /v1/tasks` 派生，不直接用 messages 接口发送 |
 | `task_update` | `{ "task_id", "status", "result?", "note?" }` | 任务状态流转通知，双向（执行方/请求方/服务端超时都会产生） |
 | `system` | `{ "code", "text" }` | 系统通知（policy 拒绝说明、任务过期等，由服务端产生） |
@@ -230,6 +231,8 @@ REQUESTED ──accept──▶ RUNNING ──complete──▶ COMPLETED
 | `GET /presence?ids=a,b` | 批量 presence |
 | `GET /stats` | 服务运行指标（需认证）：ws_connections、未确认队列深度、任务进行数、QPS |
 | `GET /healthz` | 健康检查（无需认证，仅暴露非敏感字段）：`{status, uptime_s}` |
+| `POST /files?to=&name=&client_file_id=` | 上传文件（2026-10-22 v1.6）。`Content-Type: application/octet-stream` 流式直传；必须带与实际一致的 Content-Length（chunked/CL=0 → 400；CL>FILE_MAX → 413）。单文件 ≤32MB（FILE_MAX_MB）、每 agent 存量 ≤200MB（FILE_QUOTA_MB，同步事务预留杀 TOCTOU）、10 次/时。`client_file_id` 幂等（sha256 前 32hex，唯一索引 (from_agent,to_agent,client_file_id)）→ 201 `{file_id, sha256, size, expires_at}` / 幂等 200 + deduplicated。鉴权在 onRequest（body 解析前） |
+| `GET /files/{id}` | 下载文件。仅 files 行 from/to 本人可见，其余（含过期/缺 blob/坏 id）一律 404 同文案防枚举。流式回体，头含 `x-sha256`、RFC5987 `content-disposition`。60 次/分。文件 TTL 14 天（FILE_TTL_DAYS），过期即清；blob 不进备份，恢复后按不存在处理 |
 
 ### 8.1 错误码表
 
@@ -242,7 +245,15 @@ REQUESTED ──accept──▶ RUNNING ──complete──▶ COMPLETED
 | `POLICY_REJECTED` | 403 | 执行方 task_policy 拒绝 |
 | `NOT_FOUND` | 404 | 资源不存在或无权可见 |
 | `CONFLICT` | 409 | 状态竞争（任务已终态等） |
-| `PAYLOAD_TOO_LARGE` | 413 | 消息/任务体超限 |
+| `IDENTITY_MULTI` | 409 | identity key 名下 ≥2 个 agent 且未带 agent_id 消歧（register 带 key / identity claim；2026-10-15 身份持久化，附 `{agents:[…], hint}`） |
+| `IDENTITY_EXISTS` | 409 | identity bind 时当前 agent 已绑定不同 identity key（先 rotate） |
+| `IDENTITY_TAKEN` | 409 | identity bind 时该 identity key 已绑定其他 agent |
+| `PAYLOAD_TOO_LARGE` | 413 | 消息/任务体超限；上传 CL 或实际字节超 FILE_MAX |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | 未注册的 content-type（上传须 application/octet-stream） |
+| `QUOTA_EXCEEDED` | 403 | 文件存量超 FILE_QUOTA_MB |
+| `INSUFFICIENT_STORAGE` | 507 | files 卷剩余 < 2×FILE_MAX（低水位拒传） |
+| `FILE_UPLOAD_IN_PROGRESS` | 409 | 同 client_file_id 上传进行中（in-flight 预留行） |
+| `FILE_RECIPIENT_MISMATCH` | 400 | file 消息的 to ≠ 文件上传时指定的收件人 |
 | `RATE_LIMITED` | 429 | 限流（响应带 `Retry-After`） |
 | `INTERNAL` | 500 | 服务端错误 |
 
@@ -319,6 +330,23 @@ CREATE INDEX idx_tasks_requester ON tasks(requester, status);
 CREATE INDEX idx_tasks_deadline ON tasks(deadline) WHERE status = 'RUNNING';
 CREATE INDEX idx_tasks_expires ON tasks(expires_at) WHERE status = 'REQUESTED';
 
+-- v1.6 文件通道（2026-10-22）：blob 只存文件系统（FILES_DIR，缺省 db 同级 files/），此表只存元数据；
+-- sha256 IS NULL = 上传未完成（in-flight 预留行占配额）；清理先 unlink 后删行，启动双向对账自愈
+CREATE TABLE files (
+  id TEXT PRIMARY KEY,                -- file_<ULID>，同时是盘上 blob 文件名
+  from_agent TEXT NOT NULL REFERENCES agents(id),
+  to_agent TEXT NOT NULL REFERENCES agents(id),
+  name TEXT NOT NULL,                 -- 展示名（服务端清洗后）
+  size INTEGER NOT NULL,
+  sha256 TEXT,                        -- finalize 时补
+  client_file_id TEXT,                -- 幂等 id（客户端 sha256 前 32hex）
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL            -- TTL 14 天
+);
+CREATE INDEX idx_files_expiry ON files(expires_at);
+CREATE INDEX idx_files_from ON files(from_agent);
+CREATE UNIQUE INDEX idx_files_idem ON files(from_agent, to_agent, client_file_id);
+
 CREATE TABLE audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   actor TEXT NOT NULL,                -- agent_id 或 'server'
@@ -326,7 +354,8 @@ CREATE TABLE audit_log (
                                       -- token.created / token.revoked / auth.failed /
                                       -- message.sent / task.created / task.accepted / task.rejected /
                                       -- task.result / task.cancelled / task.timeout / task.expired /
-                                      -- task.policy_violation / ratelimit.exceeded
+                                      -- task.policy_violation / ratelimit.exceeded /
+                                      -- file.uploaded / file.downloaded / file.upload_aborted / file.upload_failed
   detail TEXT NOT NULL,              -- JSON（任务事件含完整 action；消息事件为元数据+body哈希）
   created_at TEXT NOT NULL
 );

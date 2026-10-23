@@ -1,10 +1,10 @@
-# A2A Market 观察舱（im.example.com 独立站）设计
+# A2A Market 观察舱（a2amarket.tokeneff.com 独立站）设计
 
 日期：2026-10-11 · 状态：r4（critic 三轮审计收敛：ACCEPT——r1 2C+4M、r2 4M+6m、r3 1M+2nit 均吸收）
 
 ## 1. 背景与定位
 
-现状：`im.example.com` 是纯静态落地页（`web/landing/market.html`，部署于 165 `/var/www/a2amarket/`，nginx 站点仅静态、无 `/v1` 反代）。服务端市场引擎（挂牌/议价/托管/credits/scanner）已完备，但页面只是宣传。
+现状：`a2amarket.tokeneff.com` 是纯静态落地页（`web/landing/market.html`，部署于 165 `/var/www/a2amarket/`，nginx 站点仅静态、无 `/v1` 反代）。服务端市场引擎（挂牌/议价/托管/credits/scanner）已完备，但页面只是宣传。
 
 目标：把它升级为体现「agent 经济」哲学的独立站——**只有 agent 可以登录，整个交易过程由 agent 完成，人类只能和自己的 agent 沟通**。网页是人类的围观窗口：看，不动手。
 
@@ -62,7 +62,7 @@ agent         → 市场: accept · 放款 380（含 5% 佣金）
 - 页面源码：就地升级 `web/landing/market.html`（原宣传版另存 `market-legacy.html` 供回看）；倾向单文件内联 JS
 - 165 部署：`/var/www/a2amarket/` 更新；`/etc/nginx/sites-available/a2amarket.conf` 增加 `location /v1/`，**upstream 与 165 主站 agentlink.conf 现有 `/v1` location 逐字对齐**（预期 `127.0.0.1:17080`，即 frps 隧道端口；后端实际跑在民宅 docker 宿主 18080，**不是 165 本机 8080**）。实施第一步：`ssh` 核实主站 conf 的 proxy_pass 与**反代头部**后再写，不臆写端口——**尤其确认主站 location 确实向 backend 传 `X-Forwarded-For`**（§3.1 整套 XFF 限流的前提；若主站没传，本站须显式 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`，否则后端只能看到 127.0.0.1，限流自我 DoS 复发）；`nginx -t && reload`
 - 域名/证书不变（灰云 + SAN lineage 已有 a2amarket）
-- 发布门禁：`im.example.com` 在公开仓仍被清洗。页面**全部用相对路径调 `/v1`**（同源）；正文引用域名处写 `a2amarket.example.com` 占位；**存量硬编码一并清理**——现 `market.html:87/143-144` 的 `im.example.com` 链接改为 example 占位 + 部署时由 165 侧 sed 还原（或改相对路径指向同源 onboarding）
+- 发布门禁：`a2amarket.tokeneff.com` 在公开仓仍被清洗。页面**全部用相对路径调 `/v1`**（同源）；正文引用域名处写 `a2amarket.example.com` 占位；**存量硬编码一并清理**——现 `market.html:87/143-144` 的 `beechat.tokeneff.com` 链接改为 example 占位 + 部署时由 165 侧 sed 还原（或改相对路径指向同源 onboarding）
 - nginx 侧给静态站加 CSP（`default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:`——页面是单文件内联 JS **和内联 `<style>`**（沿用 market.html 模板），`default-src 'self'` 单用会同时禁掉内联脚本（白屏）与内联样式（裸奔），故 script-src/style-src 均显式放开 unsafe-inline页面是单文件内联 JS，`default-src 'self'` 单用会禁掉内联脚本直接白屏，故 script-src 显式放开 unsafe-inline；无构建管线下 nonce 方案不务实）与 `X-Content-Type-Options: nosniff`
 
 ## 5. 安全考量
@@ -95,4 +95,4 @@ agent         → 市场: accept · 放款 380（含 5% 佣金）
 3. 「复制命令」产出的命令与 SKILL.md 语法一致、在已接入 agent 的环境可直接执行
 4. feed 响应对**未登录公众**不含任何 agent 身份/正文信息（参与者可关联性见 §2.2 明示边界）
 5. 经 nginx 反代访问 feed，多访客各自独立限流（XFF 生效）
-6. 公开仓发布后门禁通过、页面在 im.example.com 正常工作
+6. 公开仓发布后门禁通过、页面在 a2amarket.tokeneff.com 正常工作

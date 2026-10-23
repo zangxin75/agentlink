@@ -6,6 +6,7 @@ const ulid = monotonicFactory() // 同毫秒内也严格递增：msg/task id 字
 
 export const sha256Hex = (s: string): string => createHash('sha256').update(s).digest('hex')
 export const newToken = (): string => 'al_' + randomBytes(32).toString('base64url')
+export const newRecoveryCode = (): string => 'al_rec_' + randomBytes(32).toString('base64url') // 一次性恢复码，与 token 同熵源，前缀区分类别
 export const newId = (prefix: string): string => `${prefix}_${ulid()}`
 export const newMsgId = (): string => newId('msg')
 export const newTaskId = (): string => newId('task')

@@ -25,15 +25,15 @@
 
 ### C3. T6 host-swap 正则断言与给出的 HTML 片段不匹配——永久红灯
 - 位置：Task 6 Step 1（计划 521 行）`/class="host-swap"[^<]*<\/span>\/download\//` vs Step 3 HTML（计划 537 行）
-- 问题：实际 HTML 是 `https://<span class="host-swap">agentlink</span>.im.example.com/download/install.sh`——`</span>` 之后是 `.im.example.com/download/`，不是 `/download/`。正则要求 `</span>` 后紧跟 `/download/`，永不匹配，`fail('install cmd host-swap missing')` 恒触发。
+- 问题：实际 HTML 是 `https://<span class="host-swap">agentlink</span>.tokeneff.com/download/install.sh`——`</span>` 之后是 `.tokeneff.com/download/`，不是 `/download/`。正则要求 `</span>` 后紧跟 `/download/`，永不匹配，`fail('install cmd host-swap missing')` 恒触发。
 - 信心：HIGH
-- 修法：改 `/class="host-swap">[^<]*<\/span>\.im.example.com\/download\/install\.(sh|ps1)/`。
+- 修法：改 `/class="host-swap">[^<]*<\/span>\.tokeneff\.com\/download\/install\.(sh|ps1)/`。
 
 ### C4. 敏感门禁代码与豁免方案自相矛盾——T4 落地后 build 必然 ABORT
-- 位置：Task 3 Step 3 build 脚本第 276 行（`grep -rEn "$PATTERNS" … scripts/install.sh scripts/install.ps1 -q`，PATTERNS 含 `im.example.com`）与 Step 1 测试第 200-201 行（对 `$DL/install.sh` 用全量 PATTERNS）vs 计划 280-284 行的实现者注
-- 问题：计划的**可执行代码块**用全量 PATTERNS 扫 install 源文件；T4 落地后 install.sh 含默认域 `https://im.example.com/download` → build 门禁 `exit 1`、测试第 3 节 `bad 敏感串命中`。计划在注释里承认了矛盾并给出收敛方案（install 文件豁免 `im.example.com` 单项），但两处代码块都没有按该方案写——实施者面对的是"代码块 A"与"注释方案 B"两套互相冲突的指令。
+- 位置：Task 3 Step 3 build 脚本第 276 行（`grep -rEn "$PATTERNS" … scripts/install.sh scripts/install.ps1 -q`，PATTERNS 含 `tokeneff\.com`）与 Step 1 测试第 200-201 行（对 `$DL/install.sh` 用全量 PATTERNS）vs 计划 280-284 行的实现者注
+- 问题：计划的**可执行代码块**用全量 PATTERNS 扫 install 源文件；T4 落地后 install.sh 含默认域 `https://agentlink.tokeneff.com/download` → build 门禁 `exit 1`、测试第 3 节 `bad 敏感串命中`。计划在注释里承认了矛盾并给出收敛方案（install 文件豁免 `tokeneff\.com` 单项），但两处代码块都没有按该方案写——实施者面对的是"代码块 A"与"注释方案 B"两套互相冲突的指令。
 - 信心：HIGH
-- 修法：把豁免直接写进两处代码：`PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117'`（无 im.example.com，附注释"默认域是刻意公开信息"），build 与 test 代码块统一引用；删除 280-283 行那段"由实现收敛"的悬空注释。豁免本身不漏水（tarball 内不含 install 源文件，产物树仍用全量清单扫描）。
+- 修法：把豁免直接写进两处代码：`PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117'`（无 tokeneff.com，附注释"默认域是刻意公开信息"），build 与 test 代码块统一引用；删除 280-283 行那段"由实现收敛"的悬空注释。豁免本身不漏水（tarball 内不含 install 源文件，产物树仍用全量清单扫描）。
 
 ## Major
 
@@ -102,7 +102,7 @@
 - Executor：C1/C2/C3/M2 都是"照计划做完仍然红"的死点——subagent 实施者最易在此擅自改断言（把断言删了求绿），必须先修计划。
 - Stakeholder：成功标准（一行命令、错配不静默、可回退）在计划里都有对应物，方向无误。
 - Skeptic：vendor ws + git archive 是本计划最稳健的决策，未见更强反案；install 只装文件的边界也守得住。真正的弱点全在"断言与实现互不对账"这一类上。
-- Security：门禁清单与 publish-public.sh 逐字一致（已核对第 21 行附近）；豁免方案不漏水（tarball 侧全量、install 侧仅去 im.example.com 项、token/内网 IP 项保留）。
+- Security：门禁清单与 publish-public.sh 逐字一致（已核对第 21 行附近）；豁免方案不漏水（tarball 侧全量、install 侧仅去 tokeneff.com 项、token/内网 IP 项保留）。
 
 ## Verdict Justification
 

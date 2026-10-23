@@ -149,13 +149,20 @@ location /download/ {
 - 部署三件套到 165 `/var/www/agentlink/`：`onboarding.html`（REGISTRATION_CODE 重建产物，gitignore）、`onboarding.md`、`onboarding.en.md`（后两者 sed 注入注册码）
 - nginx 已加 `location = /onboarding.en.md`（两个 server 块各一行，alias + text/markdown）
 
-## A2A Market 观察舱（im.example.com，2026-10-11 上线）
+## A2A Market 观察舱（a2amarket.tokeneff.com，2026-10-11 上线）
 
 - 页面：`web/landing/market.html`（旧宣传版存档 `web/landing/market-legacy.html`）→ 165 `/var/www/a2amarket/index.html`
-- **部署必须 sed 还原占位域名**（公开仓门禁禁 `im.example.com`，源文件写 `a2amarket.example.com/onboarding`）：
-  `sed 's#a2amarket.example.com/onboarding#im.example.com/onboarding#g' market.html | sudo tee /var/www/a2amarket/index.html`
+- **部署必须 sed 还原占位域名**（公开仓门禁禁 `tokeneff.com`，源文件写 `a2amarket.example.com/onboarding`）：
+  `sed 's#a2amarket.example.com/onboarding#agentlink.tokeneff.com/onboarding#g' market.html | sudo tee /var/www/a2amarket/index.html`
   ——2026-10-11 曾漏此步导致页脚「接入指南」死链，token 获取说明块上线时一并修复
 - nginx `a2amarket.conf`：新增 `location /v1/` 反代 **`127.0.0.1:17080`**（与主站 agentlink.conf 同款 frps 隧道 upstream，`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` 显式传 XFF——`GET /v1/market/feed` 的每 IP 限流取 XFF **最后一段**，无此头则全站共享 60/min 自我 DoS）
 - 静态响应头：`Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"` + `X-Content-Type-Options nosniff`（页面为单文件内联 JS + 内联 style，`default-src 'self'` 单用会白屏）
 - 后端 feed 路由随 server 容器一起部署（`docker compose up -d --build server`）
 - 上线验证：`/v1/market/feed` 200；CSP/nosniff 头在；单连接突发 70 发 XFF 请求 → 49×429（XFF 末段限流生效）；环缓冲进程内、重启即空属预期
+
+## 身份持久化上线（2026-10-15）
+
+- 后端（/v1/identity claim|bind|rotate + register 扩展）随 `docker compose up -d --build server` 部署；线上验证：`POST /v1/identity/claim -d '{}'` → **401**（端点存在、凭据无效统一口径）
+- 客户端 dist：`build-client-dist.sh` 产物（tarball×2 + SHA256SUMS + **latest-version** + install 双脚本）rsync 165 `/tmp/al-dl` → `sudo cp` 到 `/var/www/agentlink/download/`；onboarding 三件套（html + md/en 注入注册码）同步落位
+- dist 回归新增断言：分发 `im.mjs` 必须含 `--claim` 与 `identity/bind`（`scripts/test-client-dist.sh` 4d）
+- dogfood：kt 本机 `im identity bind` 成功（identity.key 0600、recovery 入 env）；已发信引导 zhy 机 `im upgrade` 后 `im identity bind`

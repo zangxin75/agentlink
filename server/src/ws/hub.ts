@@ -5,7 +5,7 @@ import type { Db } from '../db/sqlite.js'
 import type { Config } from '../config.js'
 import type { Bus, BusEvent } from '../core/bus.js'
 import type { RateLimiter } from '../core/ratelimit.js'
-import { verifyToken, touchLastSeen } from '../core/agents.js'
+import { verifyToken, touchLastSeen, getAgent, AGENT_ID_RE } from '../core/agents.js'
 import { sendMessage, getInbox, ackMessages, markRead } from '../core/messages.js'
 import type { Agent } from '../core/agents.js'
 
@@ -18,7 +18,8 @@ const BACKPRESSURE_HIGH = 1_000_000
 const BACKPRESSURE_LOW = 250_000
 
 export class WsHub {
-  private wss = new WebSocketServer({ noServer: true })
+  // 审计 2026-10-21：ws 默认 maxPayload 100MiB/帧——未鉴权连接可发大帧打内存；与 REST bodyLimit(1MB) 对齐
+  private wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 })
   // agentId → 该 agent 的全部会话（同 agent 可多连接）。onBus 直查目标 agent 的会话集合，
   // 避免每事件 O(总连接数) 全量扫描（终审 Important-3 / M5 方案 A）
   private sessions = new Map<string, Set<Session>>()
@@ -84,9 +85,18 @@ export class WsHub {
         // WS 路径绕过路由 schema，这里补上 cmid 校验：空 cmid 会被幂等去重静默吞消息（终审 Important-2）
         const cmid = String(f.client_msg_id ?? '')
         if (!cmid || cmid.length > 64) return s.socket.send(JSON.stringify({ op: 'error', code: 'INVALID_REQUEST', message: 'client_msg_id required (1-64 chars)' }))
+        // 审计 2026-10-21：REST 路径有 getAgent 404 校验，WS 缺失——幽灵收件人会落库永不投递；这里补齐
+        const to = String(f.to ?? '')
+        let recipient: unknown = null
+        if (AGENT_ID_RE.test(to)) { try { recipient = getAgent(this.deps.db, to) } catch { /* 不存在 → error 帧 */ } }
+        if (!recipient)
+          return s.socket.send(JSON.stringify({ op: 'error', code: 'AGENT_NOT_FOUND', message: 'recipient not found' }))
+        if ((recipient as any).role === 'group')
+          return s.socket.send(JSON.stringify({ op: 'error', code: 'INVALID_REQUEST', message: 'group messages must go through REST (im send)' })) // r1-M2 防绕过 fanout 黑洞
         try {
           this.deps.limiter.checkMessage(s.agentId) // WS 与 REST 共享同一限流预算（spec §11）
           const th = f.thread_id == null ? null : String(f.thread_id) // WS 免 schema，非字符串规整为字符串；格式仍由 core 单点校验
+          // WS send op 显式 text-only（设计 v3）：file 消息只走 REST（两步上传+引用，WS 帧承载不了流）
           const { message, deduplicated } = sendMessage(this.deps.db, this.deps.bus, s.agentId, { to: f.to, type: 'text', body: { text: String(f.body?.text ?? '') }, client_msg_id: cmid, thread_id: th })
           return s.socket.send(JSON.stringify({ op: 'sent', message, deduplicated }))
         } catch (e: any) { return s.socket.send(JSON.stringify({ op: 'error', code: e.code ?? 'INTERNAL', message: e.message })) }

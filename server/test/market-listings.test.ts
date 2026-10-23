@@ -178,6 +178,32 @@ describe('DELETE /v1/market/listings/:id', () => {
     expect(again.statusCode).toBe(422); expect(again.json().error.code).toBe('LISTING_NOT_OPEN')
   })
 
+  it('本人撤牌清零 escrowed_points：admin force 不得对 canceled 二次解冻（审计 2026-10-21 HIGH）', async () => {
+    const A = await base.mk('alice-esc0')
+    await base.app.inject({ method: 'GET', url: '/v1/credits/account', headers: H(A.token) })
+    const c = (await base.app.inject({ method: 'POST', url: '/v1/market/listings', headers: H(A.token), payload: { kind: 'demand', title: 't', body: 'b', budget: 150 } })).json()
+    const r = await base.app.inject({ method: 'DELETE', url: `/v1/market/listings/${c.id}`, headers: H(A.token) })
+    expect(r.statusCode).toBe(200)
+    expect(dbListing(c.id).escrowed_points).toBe(0) // 撤牌后不留残值
+    const before = acct('alice-esc0')
+    const f = await base.app.inject({ method: 'DELETE', url: `/v1/market/listings/${c.id}?force=1`, headers: H(A.token, { 'x-admin-token': 'adm-secret' }) })
+    expect(f.statusCode).toBe(200)
+    const after = acct('alice-esc0')
+    expect(after.available).toBe(before.available) // 无二次解冻
+    expect(after.locked).toBe(0)
+    expect(auditInvariant(base.db)).toBe(true)
+  })
+
+  it('demand 预算超过可用余额：INSUFFICIENT_CREDITS 整单拒绝（不留部分托管挂牌，审计 2026-10-21 MEDIUM）', async () => {
+    const A = await base.mk('alice-full')
+    await base.app.inject({ method: 'GET', url: '/v1/credits/account', headers: H(A.token) }) // faucet 600
+    const r = await base.app.inject({ method: 'POST', url: '/v1/market/listings', headers: H(A.token), payload: { kind: 'demand', title: 't', body: 'b', budget: 1000 } })
+    expect(r.statusCode).toBe(422); expect(r.json().error.code).toBe('INSUFFICIENT_CREDITS')
+    const rows = base.db.prepare(`SELECT COUNT(*) AS n FROM listings WHERE publisher='alice-full'`).get() as any
+    expect(rows.n).toBe(0) // 整单回滚，不留部分托管挂牌
+    expect(auditInvariant(base.db)).toBe(true)
+  })
+
   it('admin force：无/错 token 403；对 token 可下架 dealing demand 且 escrow 退回、落 audit', async () => {
     const A = await base.mk('alice-adm'); await base.mk('bob-adm')
     await base.app.inject({ method: 'GET', url: '/v1/credits/account', headers: H(A.token) })

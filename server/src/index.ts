@@ -8,12 +8,15 @@ import { RateLimiter } from './core/ratelimit.js'
 import { WsHub } from './ws/hub.js'
 import { startScanner } from './core/tasks.js'
 import { scanMarket } from './core/market.js'
+import { cleanupFiles, reconcileFiles, filesUsage } from './core/files.js'
 import { WebhookDispatcher } from './core/webhook.js'
+import { alignRoles } from './core/agents.js'
 
 const cfg = loadConfig()
 mkdirSync(dirname(cfg.dbPath), { recursive: true })
 const db = openDb(cfg.dbPath, cfg.dbSynchronous)
-migrate(db)
+migrate(db, { defaultOwner: cfg.defaultOwner ?? undefined })
+alignRoles(db, cfg.humanIds) // role 对齐主体=server（r2-N4）
 const bus = new Bus()
 const limiter = new RateLimiter(cfg.rate)
 const hub = new WsHub({ db, cfg, bus, limiter })
@@ -21,10 +24,16 @@ const webhook = new WebhookDispatcher({ db, cfg })
 const app = buildApp({ db, cfg, bus, limiter, connectedAgents: () => hub.connectedAgents(), wsConnections: () => hub.connectionCount(), onTokenRevoke: id => hub.closeToken(id), webhook })
 await app.listen({ port: cfg.port, host: '0.0.0.0' })
 hub.attach(app.server)
-const scanner = startScanner(db, bus, cfg, app.log, { notify: (t, e, a) => webhook.notify(t, e, a) }, now => scanMarket(db, cfg, bus, now))
+const scanner = startScanner(db, bus, cfg, app.log, { notify: (t, e, a) => webhook.notify(t, e, a) }, now => {
+  scanMarket(db, cfg, bus, now)
+  cleanupFiles(db, cfg.filesDir, 200) // 文件 TTL 清理挂同一 tick（先 unlink 后删行，LIMIT 200/tick）
+})
+// 启动对账：files 表 vs blob 目录双向自愈（崩溃窗口/备份恢复兜底）
+reconcileFiles(db, cfg.filesDir)
 const summary = setInterval(() => app.log.info({ event: 'summary', ws_connections: hub.connectionCount(),
   inbox_depth: (db.prepare('SELECT COUNT(*) c FROM messages WHERE delivered_at IS NULL').get() as { c: number }).c,
-  running_tasks: (db.prepare(`SELECT COUNT(*) c FROM tasks WHERE status='RUNNING'`).get() as { c: number }).c }), 60_000)
+  running_tasks: (db.prepare(`SELECT COUNT(*) c FROM tasks WHERE status='RUNNING'`).get() as { c: number }).c,
+  files: filesUsage(cfg.filesDir) }), 60_000)
 summary.unref()
 
 let shuttingDown = false

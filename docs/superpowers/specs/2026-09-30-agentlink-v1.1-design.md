@@ -178,10 +178,15 @@ CREATE INDEX idx_audit_task ON audit_log(json_extract(detail,'$.task_id'));
 | `POST /v1/tasks/{id}/review` | 新增 | requester 评分 1-5 |
 | `PATCH /v1/me` | 扩展 | `webhook_url`（设置响应含一次性 secret） |
 | `GET /v1/agents/{id}`、`/v1/agents` | 扩展 | `reputation` 对象 |
+| `GET /v1/messages/search?q=` | 新增（2026-10-14） | 按内容找人：body LIKE 字面匹配（`% _ \` 转义，ESCAPE `\`），仅 `me` 参与的会话（`from_agent=me OR to_agent=me`），倒序 + `limit` 1..100 默认 50；限流复用 history 桶。LIKE 全扫起步，量级上来再演进 FTS5 |
 | `GET /v1/ledger`、`/v1/ledger/summary` | 新增 | 记账查询 |
 | `POST /v1/webhook/test` | 新增 | 测试帧（独立限流桶 6/min/agent） |
+| `POST /v1/agents`（register） | 扩展（2026-10-15） | 可选 `identity_key`：未绑定 → 正常注册并记 hash，响应增一次性 `recovery_code`；已绑定 ≥1 → 409 `IDENTITY_MULTI` 附 `{agents:[…], hint}`，**绝不静默 claim**（详见 `2026-10-15-agent-identity-design.md` §4） |
+| `POST /v1/identity/claim` | 新增（2026-10-15） | **免注册码**（key/恢复码即凭据）：body `{identity_key?\|recovery_code?, agent_id?}`。命中 1 个 agent（或带 agent_id 消歧）→ 撤销该 agent 全部 token（逐 token 踢 WS）→ 新 token + 滚 recovery；key 名下 ≥2 未消歧 → 409 `IDENTITY_MULTI`；凭据无效统一 401 |
+| `POST /v1/identity/bind` | 新增（2026-10-15） | Bearer 现有 token：body `{identity_key}` 为当前 agent 补绑 → 一次性 `recovery_code`；已绑不同 hash → 409 `IDENTITY_EXISTS`；key 已绑其他 agent → 409 `IDENTITY_TAKEN` |
+| `POST /v1/identity/rotate` | 新增（2026-10-15） | key 或 recovery 其一认证：`{identity_key?\|recovery_code?, agent_id?, new_identity_key}` → 新 key 生效、**旧 key 即刻作废**、滚 recovery、撤全部旧 token（泄露自愈） |
 
-限流归属：review → task 桶；ledger、events、GET 类 → history 桶；webhook/test → 独立桶（`RATE_LIMIT_WEBHOOK_TEST_PER_MIN` 默认 6）；出站 webhook 不占任何桶（服务端行为）。
+限流归属：`/v1/identity/*` → 独立桶 `claim:${ip}` 10/h（与注册桶分开计）；review → task 桶；ledger、events、GET 类 → history 桶；webhook/test → 独立桶（`RATE_LIMIT_WEBHOOK_TEST_PER_MIN` 默认 6）；出站 webhook 不占任何桶（服务端行为）。
 
 ## 8. 横切关注点
 

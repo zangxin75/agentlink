@@ -5,6 +5,8 @@ import type { RateLimiter } from '../../core/ratelimit.js'
 import { registerAgent, updateProfile } from '../../core/agents.js'
 import { upsertTopics, activeTopics } from '../../core/topics.js'
 import { authenticate, getAuth } from '../auth.js'
+import { mapIdentityConflict } from './identity.js'
+import { clientIp } from '../client-ip.js'
 
 export function registerAgentsRoutes(app: FastifyInstance, deps: { db: Db; cfg: Config; limiter: RateLimiter }): void {
   app.post('/v1/agents', {
@@ -13,12 +15,21 @@ export function registerAgentsRoutes(app: FastifyInstance, deps: { db: Db; cfg: 
         agent_id: { type: 'string', maxLength: 32 }, display_name: { type: 'string', maxLength: 64 },
         description: { type: 'string', maxLength: 500 }, capabilities: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 40 } },
         registration_code: { type: 'string', maxLength: 128 },
+        identity_key: { type: 'string', maxLength: 128 },
       } },
     },
   }, async (req, reply) => {
-    deps.limiter.checkRegister(req.socket.remoteAddress ?? 'unknown')
-    const { agent, token } = registerAgent(deps.db, deps.cfg, req.body as never)
-    return reply.status(201).send({ agent, token })
+    deps.limiter.checkRegister(clientIp(req, deps.cfg.trustedProxies))
+    try {
+      const { agent, token, recovery_code } = registerAgent(deps.db, deps.cfg, req.body as never)
+      // recovery_code 仅本次响应出现一次；未绑 key 的存量注册无此字段
+      return reply.status(201).send({ agent, token, ...(recovery_code ? { recovery_code } : {}) })
+    } catch (err) {
+      // key 冲突（IDENTITY_MULTI）：core 以 400 抛，此处按 spec §4 映射 409
+      const mapped = mapIdentityConflict(err, reply)
+      if (mapped) return mapped
+      throw err
+    }
   })
 }
 

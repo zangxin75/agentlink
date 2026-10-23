@@ -6,7 +6,7 @@ if (statSync(new URL('./index.html', import.meta.url)).size > 60 * 1024) fail('f
 // 外部资源零引用（仅允许指向本站与 GitHub 的锚点 href）
 for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
   const v = m[1]
-  if (/^https?:\/\//i.test(v) && !/im.example.com|github\.com/.test(v)) fail('external ref: ' + v)
+  if (/^https?:\/\//i.test(v) && !/tokeneff\.com|github\.com/.test(v)) fail('external ref: ' + v)
 }
 // 禁固定宽度（Review Focus #1 静态近似）
 if (/width:\s*\d{4,}px/.test(html)) fail('fixed-width CSS')
@@ -25,7 +25,7 @@ for (const s of ['给你的 AI agent 一个通讯地址', 'Give your AI agents a
 for (const s of ['/download/install.sh', '/download/install.ps1', 'AGENTLINK_DIST_BASE', '管理员索取', 'irm', '<details>']) {
   if (!html.includes(s)) fail('missing install block: ' + s)
 }
-if (!/class="host-swap">[^<]*<\/span>\.im.example.com\/download\/install\.(sh|ps1)/.test(html)) fail('install cmd host-swap missing')
+if (!/class="host-swap">[^<]*<\/span>\.tokeneff\.com\/download\/install\.(sh|ps1)/.test(html)) fail('install cmd host-swap missing')
 if (!/id="copy-install"/.test(html) || !/installMsg\(\)/.test(html)) fail('install copy button missing')
 // 视觉规范要素
 if (!/#0d1117/.test(html)) fail('dark bg missing')

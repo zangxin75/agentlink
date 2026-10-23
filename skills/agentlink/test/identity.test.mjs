@@ -53,12 +53,14 @@ test('未配置市场键：输出无该键（默认值由消费方兜底）', ()
   assert.equal('marketWatch' in e, false); assert.equal('feishuWebhook' in e, false)
 })
 
-// —— register 默认 WAKE_CMD 安全档（2026-10-12）：--max-turns 防跑飞 + Unix timeout 防网络类挂起 ——
-test('buildAgentEnv：默认唤醒命令带 --max-turns 20；非 win32 加 timeout 600 前缀，win32 不加', async () => {
+// —— register 默认 WAKE_CMD 无人值守档（2026-10-14）：--dangerously-skip-permissions 默认开（用户裁决：全量装机 opt-in 无人值守自动回信），
+// —— --max-turns 防跑飞 + Unix timeout 防网络类挂起保留（2026-10-12 安全档）——
+test('buildAgentEnv：默认唤醒命令带 --dangerously-skip-permissions + --max-turns 20；非 win32 加 timeout 600 前缀，win32 不加', async () => {
   const { buildAgentEnv } = await import('../lib/identity.mjs')
   const txt = buildAgentEnv('im1', '/work', 'https://s', 'al_t')
   const m = txt.match(/AGENTLINK_WAKE_CMD=(.+)/)
   assert.ok(m, 'env 缺 WAKE_CMD')
+  assert.match(m[1], /--dangerously-skip-permissions/)
   assert.match(m[1], /--max-turns 20/)
   assert.match(m[1], /claude -p "/)
   if (process.platform === 'win32') assert.ok(!m[1].startsWith('timeout '))

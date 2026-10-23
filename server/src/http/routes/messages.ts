@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { authenticate, getAuth } from '../auth.js'
-import { getInbox, ackMessages, markRead, unreadCounts, receipts, history } from '../../core/messages.js'
+import { getInbox, ackMessages, markRead, unreadCounts, receipts, history, searchMessages } from '../../core/messages.js'
 import { getAgent } from '../../core/agents.js'
 import { audit } from '../../core/audit.js'
 import { AppError } from '../errors.js'
@@ -40,5 +40,16 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { db: Db; cfg: C
     const q = req.query as never as { peer?: string; thread_id?: string; topic?: string; before?: string; after?: string; limit?: number }
     if (q.peer) getAgent(deps.db, q.peer) // peer 出现时保留 v1 存在性校验（r2-R2-3）
     return history(deps.db, me, { ...q, limit: q.limit ?? 50 })
+  })
+
+  // 按内容找人：全文反查本人会话（记事不记名时的对话方定位）
+  app.get('/v1/messages/search', { preHandler: auth, schema: { querystring: { type: 'object', required: ['q'], properties: { q: { type: 'string', minLength: 1, maxLength: 128 }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 } } } } }, async (req) => {
+    const me = getAuth(req).agent.id
+    try { deps.limiter.checkHistory(me) } catch (e) {
+      if (e instanceof AppError && e.code === 'RATE_LIMITED') audit(deps.db, me, 'ratelimit.exceeded', { path: '/v1/messages/search' })
+      throw e
+    }
+    const q = req.query as never as { q: string; limit?: number }
+    return searchMessages(deps.db, me, { q: q.q, limit: q.limit ?? 50 })
   })
 }

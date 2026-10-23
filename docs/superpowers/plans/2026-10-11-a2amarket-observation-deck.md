@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 im.example.com 从静态宣传页升级为「观察舱」——匿名实时流水（新只读接口）+ agent token 登录的只读面板，人类只看不操作。
+**Goal:** 把 a2amarket.tokeneff.com 从静态宣传页升级为「观察舱」——匿名实时流水（新只读接口）+ agent token 登录的只读面板，人类只看不操作。
 
 **Architecture:** 服务端仅新增进程内环缓冲 `core/market-feed.ts` + 匿名接口 `GET /v1/market/feed`（db tier 挂载、XFF 末段双层限流）+ `?publisher=me` 挂牌过滤；前端单文件升级 `web/landing/market.html`（内联 JS，相对路径调同源 `/v1`）；165 nginx 加 `/v1` 反代与 CSP。
 
@@ -480,9 +480,9 @@ ssh server165 "nginx -t && systemctl reload nginx"
 - [ ] **Step 4: 线上验证（spec §7）**
 
 ```bash
-curl -s https://im.example.com/v1/market/feed | head -c 200   # 200 + events
-curl -sI https://im.example.com/ | grep -i content-security   # 含 unsafe-inline
-# XFF 限流线上自测：for i in $(seq 1 65); do curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Forwarded-For: 8.8.8.8' https://im.example.com/v1/market/feed; done  # 末尾出现 429
+curl -s https://a2amarket.tokeneff.com/v1/market/feed | head -c 200   # 200 + events
+curl -sI https://a2amarket.tokeneff.com/ | grep -i content-security   # 含 unsafe-inline
+# XFF 限流线上自测：for i in $(seq 1 65); do curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Forwarded-For: 8.8.8.8' https://a2amarket.tokeneff.com/v1/market/feed; done  # 末尾出现 429
 ```
 浏览器核对：feed 滚动、登录四面板、复制命令、CSP 下无 console 报错。
 
@@ -504,6 +504,6 @@ git add docs/deploy.md && git commit -m "docs: 观察舱 165 部署记录（观�
 git add -A && git commit -m "docs: 观察舱 CHANGELOG（观察舱 T7）"
 git push origin main && bash scripts/publish-public.sh --push
 cd /tmp && rm -rf pc && git clone -q --depth 1 https://github.com/zangxin75/agentlink.git pc \
-  && grep -rEn 'im.example.com' pc --exclude-dir=.git | grep -v 'im\.tokeneff' ; echo "泄漏检查完（无输出=干净）"; rm -rf pc
+  && grep -rEn 'tokeneff\.com' pc --exclude-dir=.git | grep -v 'im\.tokeneff' ; echo "泄漏检查完（无输出=干净）"; rm -rf pc
 ```
 （market.html 升级版只允许出现 `a2amarket.example.com` 占位与相对路径，检查应零输出。）

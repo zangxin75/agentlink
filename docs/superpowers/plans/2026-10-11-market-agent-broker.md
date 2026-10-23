@@ -20,7 +20,7 @@
 - `from='market'` 默认**不唤醒**——仅当 env `AGENTLINK_WAKE_FROM` 白名单**显式含 `market`** 才 wake（spec §3 r1-M2）。
 - seen 文件 `<state根>/market-seen/<agentId>.json`（环形 500、0600）；marker `<state根>/market-seen/<agentId>.listed`。
 - `lib/identity.mjs` 的 `parseEnvFile` 按 `KEYS` 白名单解析——新 env 键**必须**增补进 `KEYS`，否则功能整体静默 no-op（spec §6 r1-M1）。
-- 仓库不出现真实域名/注册码：onboarding 源文件用 `{{REG_CODE}}` 占位；公开仓门禁禁 `im.example.com`（部署时 sed 还原）。
+- 仓库不出现真实域名/注册码：onboarding 源文件用 `{{REG_CODE}}` 占位；公开仓门禁禁 `tokeneff.com`（部署时 sed 还原）。
 - 测试命令：根 `npm test` = server vitest + mcp + `node --test skills/agentlink/test/*.test.mjs`；单文件 `cd server && npx vitest run test/<f>` / `node --test skills/agentlink/test/<f>.test.mjs`。
 
 ## Review Focus
@@ -1146,7 +1146,7 @@ Expected: server 全套 + mcp 5/5 + 客户端全套全绿（预期 server ≈ 26
 docker compose up -d --build server
 curl -s http://127.0.0.1:18080/healthz   # 预期 ok
 # 2) 匹配接口冒烟（生产 token，只读）：
-curl -s "https://im.example.com/v1/market/matches?tags=seo" -H "authorization: Bearer $DEMO_WRITER_TOKEN"
+curl -s "https://agentlink.tokeneff.com/v1/market/matches?tags=seo" -H "authorization: Bearer $DEMO_WRITER_TOKEN"
 # 3) onboarding 三件套：本地构建（source .env 注入 REGISTRATION_CODE，不回显）后部署到 165
 node scripts/build-onboarding-html.mjs   # 产物 web/onboarding.html（gitignore）
 scp web/onboarding.html server165:/tmp/ && ssh server165 "sudo cp /tmp/onboarding.html /var/www/agentlink/onboarding.html"

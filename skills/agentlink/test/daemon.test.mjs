@@ -210,6 +210,29 @@ test('收信唤醒：WAKE_CMD 拉起、WAKE_FROM 白名单、COOLDOWN 合并突�
   } finally { await d.stop(); await s.close() }
 })
 
+test('审计 2026-10-21：WAKE_FROM 未配置 → 默认不唤醒任意发送方（安全档默认），白名单才唤醒', async () => {
+  const wakes = []
+  const fakeSpawn = (cmd, opts) => { wakes.push({ cmd, cwd: opts?.cwd }); return { unref() {}, on() {} } }
+  const s = mockServer((ws) => ws.on('message', raw => { const f = JSON.parse(String(raw)); if (f.op === 'ack') ws.send(JSON.stringify({ op: 'ack_ok', acked: f.ids.length })) }), { messages: [] })
+  const port = await s.port
+  writeFileSync(join(cfg, 'agents.d', 'wk2.env'),
+    `AGENTLINK_NAME=wk2\nAGENTLINK_DIR=/wk2\nAGENTLINK_SERVER=ws://127.0.0.1:${port}\nAGENTLINK_TOKEN=tokw2\n` +
+    `AGENTLINK_WAKE_CMD=claude -p "处理"\n`) // 无 WAKE_FROM
+  const { createDaemon } = await import('../daemon.mjs')
+  const d = createDaemon({ hostname: HOST, spawn: fakeSpawn })
+  try {
+    await sleep(300)
+    const a = s.wss.clients.values().next().value
+    const { agentIdFor } = await import('../lib/identity.mjs')
+    const own = agentIdFor('wk2', HOST, '/wk2')
+    const m = (id, from) => ({ id, from, thread_id: 't', type: 'text', body: { text: 'x' }, created_at: Date.now(), to: own })
+    a.send(JSON.stringify({ op: 'message', message: m('w1', 'stranger') })) // 旧默认会唤醒——新默认必须拦
+    a.send(JSON.stringify({ op: 'message', message: m('w2', 'anybody') }))
+    await sleep(600)
+    assert.equal(wakes.length, 0, '未配 WAKE_FROM 不得唤醒: ' + wakes.length)
+  } finally { await d.stop(); await s.close() }
+})
+
 // —— 市场守望集成（市场代理 spec §3/§6）：maybeWake market 门禁 + 守望调度 + 热加载 reset ——
 
 test('maybeWake market 门禁：from=market 默认不唤醒；WAKE_FROM 显式含 market 才唤醒（r1-M2）', async () => {
@@ -259,4 +282,21 @@ test('守望调度：watcher.tick 按 agent 周期被调；env mtime 变化触�
     await sleep(400) // ≥ loadMs(100) 的下一轮热加载
     assert.ok(resets.includes(aif('mw', HOST, '/mw'))) // 换 token 热加载 → reset（恢复 401 停止的守望）
   } finally { await d.stop(); await s.close() }
+})
+
+test('守护：REST ack 返回 {acked:[]}（WS 先 ack 后的幂等重复）daemon 不报错不受影响（v3 §3(a) 回归钉）', async () => {
+  // mockServer 的 REST ack 返回体不影响 daemon（ack() 为 fire-and-forget，不读响应）；
+  // 本测试钉住：WS ack 成功后 REST 同 id 再发（双通道），daemon 侧无告警无重试无断连
+  const s = mockServer((ws) => ws.on('message', raw => { const f = JSON.parse(String(raw)); if (f.op === 'ack') ws.send(JSON.stringify({ op: 'ack_ok', acked: f.ids.length })) }), { messages: [] })
+  const port = await s.port
+  envFile('/wguard', 'gw', 'tok1', port)
+  const { createDaemon } = await import('../daemon.mjs')
+  const d = createDaemon({ hostname: HOST })
+  await sleep(300)
+  const a = s.wss.clients.values().next().value
+  a.send(JSON.stringify({ op: 'message', message: msg('g1', 1) }))
+  await sleep(300)
+  assert.ok(s.seen.acks.includes('g1'))          // REST ack 照发（持久回执语义保留）
+  assert.equal(d.connected(), 1)                  // 连接仍在——空 acked 无任何影响
+  await d.stop(); await s.close()
 })

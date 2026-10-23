@@ -100,10 +100,12 @@ export function createListing(db: Db, cfg: Config, publisher: string, input: Lis
   else price = checkPoints(input.price, cfg)
   db.transaction(() => {
     if (input.kind === 'demand') {
-      // 上架费 1 点 burn + 托管冻结 min(budget, 可用)：同一事务，缺额抛错则 burn 一并回滚
+      // 上架费 1 点 burn + 托管全额冻结：同一事务，缺额抛错则 burn 一并回滚
+      // 审计 2026-10-21：不再 Math.min 部分托管——预算不足整单拒绝，杜绝零/低托管挂牌骗取 bid burn
       debitAccount(db, publisher, 'burn', 1, { refType: 'listing', refId: id })
       const a = getOrCreateAccount(db, publisher)
-      const escrow = Math.min(budget as number, available(a))
+      if (available(a) < (budget as number)) throw Errors.unprocessable('INSUFFICIENT_CREDITS', 'insufficient credits')
+      const escrow = budget as number
       lockPoints(db, publisher, escrow, 'escrow_lock', { refType: 'listing', refId: id })
       db.prepare('INSERT INTO listings (id, kind, publisher, title, body, tags, status, budget, price, escrowed_points, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(id, input.kind, publisher, input.title, input.body, JSON.stringify(tags), 'open', budget, null, escrow, expiresAt, now.toISOString())
@@ -275,7 +277,7 @@ export function deleteListing(db: Db, _cfg: Config, id: string, actor: string, o
         const remainder = (row.escrowed_points as number) - refunded - heldByDelivered
         if (remainder > 0) unlockPoints(db, row.publisher as string, remainder, 'escrow_release', { refType: 'listing', refId: id })
         released = refunded + Math.max(0, remainder)
-      } else if (row.status !== 'done' && (row.escrowed_points as number) > 0) {
+      } else if (row.status === 'open' && (row.escrowed_points as number) > 0) { // 审计 2026-10-21：仅 open 退余款——canceled/expired 已退过，不得二次解冻
         unlockPoints(db, row.publisher as string, row.escrowed_points as number, 'escrow_release', { refType: 'listing', refId: id })
         released = row.escrowed_points as number
       }
@@ -288,7 +290,7 @@ export function deleteListing(db: Db, _cfg: Config, id: string, actor: string, o
     if ((row.escrowed_points as number) > 0)
       unlockPoints(db, row.publisher as string, row.escrowed_points as number, 'escrow_release', { refType: 'listing', refId: id })
     released = (row.escrowed_points as number) > 0 ? row.escrowed_points as number : 0
-    db.prepare(`UPDATE listings SET status='canceled' WHERE id=?`).run(id)
+    db.prepare(`UPDATE listings SET status='canceled', escrowed_points=0 WHERE id=?`).run(id) // 审计 2026-10-21：清零残值，防 admin force 二次解冻
   })()
   // 本人下架镜像发布事件（feed 是事件流：canceled 事件补齐"发布→撤下"的完整故事；admin force 走 audit 不走 feed）
   if (!force) recordMarketEvent('listing_canceled', 0, Date.now(), { title: row.title as string, listingId: id })

@@ -14,11 +14,11 @@
 
 - **不修改 AgentLink 服务端代码**（`server/`、`mcp/` 目录零改动；延续落地页 spec 约束）
 - **tarball 裸机自足是硬约束**（spec §2）：无 checkout、无 node_modules 时 `node im.mjs --help` 与 `node daemon.mjs` 可运行；`ws` 唯一来源是提交进仓库的 `skills/agentlink/vendor/ws/`，构建**不**从 `node_modules/` 复制
-- **敏感扫描门禁清单与 `publish-public.sh` 同源**（spec §6）：`al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com`——扫描必须在 **tar 压缩之前**对解包树执行，命中即 abort
+- **敏感扫描门禁清单与 `publish-public.sh` 同源**（spec §6）：`al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com`——扫描必须在 **tar 压缩之前**对解包树执行，命中即 abort
 - **install 脚本边界**（spec §4）：只装文件；不碰 sudo、不改 PATH、不写任何 Claude Code 配置；`set -euo pipefail`（ps1 用 `$ErrorActionPreference='Stop'`）；全脚本 <200 行；校验/解压失败 → 明确报错退出、先解到临时目录再原子改名、不留半成品
 - **install.ps1 首个可执行语句强制 TLS1.2**（spec §4）：`[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12`
-- **环境变量契约**（spec §4）：`AGENTLINK_DIST_BASE`（默认 `https://im.example.com/download`）、`AGENTLINK_VERSION`（默认 latest）、`AGENTLINK_INSTALL_DIR`（默认 `~/.agentlink/client`）
-- **落地页 <60KB**（现状 20.7KB，check.mjs 已断言）；新安装命令 URL 全部 `im.example.com` 自家域（check.mjs external-ref 白名单天然覆盖）
+- **环境变量契约**（spec §4）：`AGENTLINK_DIST_BASE`（默认 `https://agentlink.tokeneff.com/download`）、`AGENTLINK_VERSION`（默认 latest）、`AGENTLINK_INSTALL_DIR`（默认 `~/.agentlink/client`）
+- **落地页 <60KB**（现状 20.7KB，check.mjs 已断言）；新安装命令 URL 全部 `tokeneff.com` 自家域（check.mjs external-ref 白名单天然覆盖）
 - 产物 `web/download/` 不入 git（.gitignore 追加），只入库脚本与 install 源文件
 - commit 端 Co-Authored-By: Claude Code <noreply@anthropic.com>；中文注释、conventional commit（feat:/test:/chore:/docs:）
 - skills 套件跑法（Node v24 目录形式不可用，既有 Ruling）：`node --test "skills/agentlink/test/*.test.mjs"`
@@ -202,10 +202,10 @@ grep -q '^agentlink/contrib/agentlink-daemon.service$' "$TMP/list" && ok contrib
 if grep -qE '^agentlink/test/' "$TMP/list"; then bad "test/未被排除"; else ok test已排除; fi
 tar -xzf "$TARBALL" -C "$TMP"
 
-# 3. 敏感扫描零命中（tarball 侧全量清单；install 源文件用 INSTALL 清单——其默认域 im.example.com 是刻意公开信息，豁免；
+# 3. 敏感扫描零命中（tarball 侧全量清单；install 源文件用 INSTALL 清单——其默认域 tokeneff.com 是刻意公开信息，豁免；
 #    token 与内网 IP 项保留。两清单与 build 脚本逐字同源，r1 C4）
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
-PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117'
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
+PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117'
 if grep -rEn "$PATTERNS" "$TMP/agentlink" -q; then bad 敏感串命中tarball; else ok 敏感扫描零命中-tarball; fi
 if grep -rEn "$PATTERNS_INSTALL" scripts/install.sh scripts/install.ps1 -q 2>/dev/null; then bad 敏感串命中install; else ok 敏感扫描零命中-install; fi
 
@@ -283,10 +283,10 @@ sed -i '5i\
 ' "$SK"
 
 # 3. 敏感扫描门禁——tar 压缩之前（spec §6；tarball 树用全量清单，与 publish-public.sh 逐字同源）。
-#    install 源文件用 INSTALL 清单：其默认域 im.example.com 是刻意公开信息（install 器就是从那下载），豁免
-#    im.example.com 单项；token 与内网 IP 项保留。tarball 内不含 install 源文件，产物树始终全量扫描，豁免不漏水（r1 C4）。
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
-PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117'
+#    install 源文件用 INSTALL 清单：其默认域 agentlink.tokeneff.com 是刻意公开信息（install 器就是从那下载），豁免
+#    tokeneff.com 单项；token 与内网 IP 项保留。tarball 内不含 install 源文件，产物树始终全量扫描，豁免不漏水（r1 C4）。
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
+PATTERNS_INSTALL='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117'
 if grep -rEn "$PATTERNS" "$STAGE/tree" -q; then
   echo 'ABORT: 敏感串命中（客户端包是最高敏面）:' >&2
   grep -rEn "$PATTERNS" "$STAGE/tree" | head >&2; exit 1
@@ -388,7 +388,7 @@ kill $SRV_PID "$(cat "$TMP/badpid")" 2>/dev/null || true
 # 边界承诺：不提权(sudo)、不改 PATH、不写任何 Claude Code 配置；hooks/daemon 由 agent 按 SKILL.md 自助。
 # 重跑 = 升级（幂等）。可先读再跑：全文 <200 行。
 set -euo pipefail
-DIST_BASE="${AGENTLINK_DIST_BASE:-https://im.example.com/download}"
+DIST_BASE="${AGENTLINK_DIST_BASE:-https://agentlink.tokeneff.com/download}"
 VERSION="${AGENTLINK_VERSION:-latest}"
 INSTALL_DIR="${AGENTLINK_INSTALL_DIR:-$HOME/.agentlink/client}"
 TARBALL="$([ "$VERSION" = latest ] && echo agentlink.tar.gz || echo "agentlink-$VERSION.tar.gz")"
@@ -481,7 +481,7 @@ else echo 'ok  - pwsh 不存在，跳过语法检查（人工核对清单见 spe
 # Win10 1803+ 自带 tar；缺失时报错并给指引。
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ErrorActionPreference = 'Stop'
-$DistBase   = if ($env:AGENTLINK_DIST_BASE)   { $env:AGENTLINK_DIST_BASE }   else { 'https://im.example.com/download' }
+$DistBase   = if ($env:AGENTLINK_DIST_BASE)   { $env:AGENTLINK_DIST_BASE }   else { 'https://agentlink.tokeneff.com/download' }
 $Version    = if ($env:AGENTLINK_VERSION)     { $env:AGENTLINK_VERSION }     else { 'latest' }
 $InstallDir = if ($env:AGENTLINK_INSTALL_DIR) { $env:AGENTLINK_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.agentlink\client' }
 $Tarball = if ($Version -eq 'latest') { 'agentlink.tar.gz' } else { "agentlink-$Version.tar.gz" }
@@ -547,16 +547,16 @@ location /download/ {
 }
 ```
 
-**注意**：安装命令的 host 部分用 `<span class="host-swap">agentlink</span>` span——文字节点会被 `apply()` 统一切换；复制按钮**不能**复用 `onboardUrl()`（那返回 onboarding 路径），新加 `installCmd(platform)` 帮手按当前 hostSwap 拼 `/download/install.sh`/`install.ps1` 全命令后走 `copyText`。命令 URL 是 `im.example.com` 自家域，check.mjs external-ref 白名单天然覆盖。
+**注意**：安装命令的 host 部分用 `<span class="host-swap">agentlink</span>` span——文字节点会被 `apply()` 统一切换；复制按钮**不能**复用 `onboardUrl()`（那返回 onboarding 路径），新加 `installCmd(platform)` 帮手按当前 hostSwap 拼 `/download/install.sh`/`install.ps1` 全命令后走 `copyText`。命令 URL 是 `tokeneff.com` 自家域，check.mjs external-ref 白名单天然覆盖。
 
-- [ ] **Step 1: 写失败断言**（check.mjs 文案抽检段后追加；正则与 Step 3 的 HTML 逐字对账——`</span>` 后是 `.im.example.com/download/`，r1 C3）
+- [ ] **Step 1: 写失败断言**（check.mjs 文案抽检段后追加；正则与 Step 3 的 HTML 逐字对账——`</span>` 后是 `.tokeneff.com/download/`，r1 C3）
 
 ```js
 // 安装区块（dist spec §5）：双平台命令各一、host-swap 复用、双复制按钮、保守两步折叠、自托管与注册码文案
 for (const s of ['/download/install.sh', '/download/install.ps1', 'AGENTLINK_DIST_BASE', '管理员索取', 'irm', '<details>']) {
   if (!html.includes(s)) fail('missing install block: ' + s)
 }
-if (!/class="host-swap">[^<]*<\/span>\.im.example.com\/download\/install\.(sh|ps1)/.test(html)) fail('install cmd host-swap missing')
+if (!/class="host-swap">[^<]*<\/span>\.tokeneff\.com\/download\/install\.(sh|ps1)/.test(html)) fail('install cmd host-swap missing')
 if (!/id="copy-install-sh"/.test(html) || !/id="copy-install-ps1"/.test(html)) fail('install copy buttons missing')
 ```
 
@@ -573,13 +573,13 @@ index.html `#onboard` 区现有 `.term` 块后追加（双语对全部配 data-z
 <div class="term">
   <div class="term-bar"><i></i><i></i><i></i></div>
   <pre><span class="c"># macOS / Linux</span>
-<span class="p">$</span> curl -fsSL https://<span class="host-swap">agentlink</span>.im.example.com/download/install.sh | bash</pre>
+<span class="p">$</span> curl -fsSL https://<span class="host-swap">agentlink</span>.tokeneff.com/download/install.sh | bash</pre>
 </div>
 <button id="copy-install-sh" data-zh="复制 macOS/Linux 命令" data-en="Copy macOS/Linux command">复制 macOS/Linux 命令</button>
 <div class="term">
   <div class="term-bar"><i></i><i></i><i></i></div>
   <pre><span class="c"># Windows（PowerShell）</span>
-<span class="p">$</span> irm https://<span class="host-swap">agentlink</span>.im.example.com/download/install.ps1 | iex</pre>
+<span class="p">$</span> irm https://<span class="host-swap">agentlink</span>.tokeneff.com/download/install.ps1 | iex</pre>
 </div>
 <button id="copy-install-ps1" data-zh="复制 Windows 命令" data-en="Copy Windows command">复制 Windows 命令</button>
 <details>
@@ -597,8 +597,8 @@ index.html `#onboard` 区现有 `.term` 块后追加（双语对全部配 data-z
   // 安装命令复制（dist spec §5）：每平台一个按钮，按当前 hostSwap 拼全命令，中文态 agentlink.、英文态 im.
   function installCmd(platform) {
     return platform === 'sh'
-      ? 'curl -fsSL https://' + hostSwap() + '.im.example.com/download/install.sh | bash'
-      : 'irm https://' + hostSwap() + '.im.example.com/download/install.ps1 | iex'
+      ? 'curl -fsSL https://' + hostSwap() + '.tokeneff.com/download/install.sh | bash'
+      : 'irm https://' + hostSwap() + '.tokeneff.com/download/install.ps1 | iex'
   }
   function bindInstallBtn(id, platform) {
     var btn = document.getElementById(id)

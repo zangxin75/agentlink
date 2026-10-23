@@ -22,6 +22,7 @@ describe('app', () => {
     expect(body).toContain('/download/install.sh')
     expect(body).toContain('im register')
     expect(body).toContain('registration_code')
+    expect(body).toContain('/onboarding.md') // 注册码自取指引：接入指南公开，agent 可自助拿码（不再只能带外索取）
     expect(body).toContain('updated:')
   })
 

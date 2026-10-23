@@ -14,7 +14,7 @@
 
 - landing 单文件 < 60KB（gzip 前），无任何外部资源（无 CDN 字体/图床/统计脚本）
 - 源文件入库 `web/landing/index.html`；165 上为部署副本
-- 公开导出前扫描零命中（单一模式清单，sed 与门禁共用，spec §7"同源"）：`al_[A-Za-z0-9]{20,}`、`wl_[A-Za-z0-9]{20,}`、真实 IP 段**含裸前缀**（`203.0.113.10`/`203.0.113.20`/`203.0.113.30`/`192.0.2.x`/`192.0.2.x`，无尾随点也算命中——spec/plan 文档自身以裸前缀提及这些段）、`im.example.com`
+- 公开导出前扫描零命中（单一模式清单，sed 与门禁共用，spec §7"同源"）：`al_[A-Za-z0-9]{20,}`、`wl_[A-Za-z0-9]{20,}`、真实 IP 段**含裸前缀**（`221.200`/`124.95`/`49.233`/`100.107`/`100.117`，无尾随点也算命中——spec/plan 文档自身以裸前缀提及这些段）、`tokeneff.com`
 - 不修改 AgentLink 服务端任何代码；API/WS/onboarding/healthz 路径行为不得变化
 - commit 信息 conventional（`feat:`/`chore:`/`docs:`）
 
@@ -49,7 +49,7 @@ if (statSync(new URL('./index.html', import.meta.url)).size > 60 * 1024) fail('f
 // 外部资源零引用（仅允许指向本站与 GitHub 的锚点 href）
 for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
   const v = m[1]
-  if (/^https?:\/\//i.test(v) && !/im.example.com|github\.com/.test(v)) fail('external ref: ' + v)
+  if (/^https?:\/\//i.test(v) && !/tokeneff\.com|github\.com/.test(v)) fail('external ref: ' + v)
 }
 // 禁固定宽度（Review Focus #1 静态近似）
 if (/width:\s*\d{4,}px/.test(html)) fail('fixed-width CSS')
@@ -131,7 +131,7 @@ bash scripts/publish-public.sh || { echo "publish script failed"; exit 1; }
 TREE=/tmp/agentlink-public-export
 FAIL=0
 # 门禁清单（spec §7）：真实凭据与拓扑零命中——与 publish-public.sh 共用同一清单（下方以变量复制保持同步）
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
 if grep -rEn "$PATTERNS" "$TREE" --exclude-dir=.git -q; then
   echo "LEAK FOUND:"; grep -rEn "$PATTERNS" "$TREE" --exclude-dir=.git | head -20; FAIL=1
 fi
@@ -164,15 +164,15 @@ git archive HEAD | tar -x -C "$EXPORT"
 rm -rf "$EXPORT/.superpowers"
 # 去敏替换（sed 清单——真实拓扑仅存于本私有仓库与 165）
 # 去敏替换（sed 清单与门禁同源——裸前缀也算命中，覆盖 spec/plan 文档中的裸段提及）
-grep -rlE '203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com' "$EXPORT" --exclude-dir=.git |
+grep -rlE '221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com' "$EXPORT" --exclude-dir=.git |
   xargs -r sed -i -E \
-    -e 's/203.0.113.10(\.[0-9.]+)?/203.0.113.10/g' \
-    -e 's/203.0.113.20(\.[0-9.]+)?/203.0.113.20/g' \
-    -e 's/203.0.113.30(\.[0-9.]+)?/203.0.113.30/g' \
+    -e 's/221\.200(\.[0-9.]+)?/203.0.113.10/g' \
+    -e 's/124\.95(\.[0-9.]+)?/203.0.113.20/g' \
+    -e 's/49\.233(\.[0-9.]+)?/203.0.113.30/g' \
     -e 's/100\.(107|117)(\.[0-9.]+)?/192.0.2.x/g' \
-    -e 's/[a-z0-9-]+\.im.example.com/im.example.com/g'
+    -e 's/[a-z0-9-]+\.tokeneff\.com/im.example.com/g'
 # 推送前自检（同一清单；失败即 abort，防误推）
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
 if grep -rEn "$PATTERNS" "$EXPORT" --exclude-dir=.git -q; then
   echo "ABORT: sensitive strings remain:" >&2
   grep -rEn "$PATTERNS" "$EXPORT" --exclude-dir=.git | head >&2
@@ -206,7 +206,7 @@ fi
 
 **Interfaces:**
 - Consumes: Task 1 的 `web/landing/index.html`
-- Produces: `https://im.example.com/` 与 `https://im.tokeneff.com/` 返回 landing 页
+- Produces: `https://agentlink.tokeneff.com/` 与 `https://im.tokeneff.com/` 返回 landing 页
 
 - [ ] **Step 1: 上传页面** — `scp web/landing/index.html server165:/tmp/` 后 `ssh server165 'sudo install -m 644 /tmp/index.html /var/www/agentlink/index.html'`
 - [ ] **Step 2: nginx 加精确 location** — 仅在 **443** server 块 `location = /onboarding` 旁加（80 块保持 `location / { return 301 … }` 不动——精确匹配优先于前缀匹配，若在 80 块也加会劫持 HTTPS 重定向，明文直接出页）：
@@ -221,7 +221,7 @@ fi
 
 ```bash
 for host in agentlink im; do
-  u="https://$im.example.com"
+  u="https://$host.tokeneff.com"
   curl -sf "$u/healthz" >/dev/null && echo "$u healthz OK" || echo "$u healthz FAIL"
   curl -sf "$u/onboarding" | head -1 | grep -q AgentLink && echo "$u onboarding OK" || echo "$u onboarding FAIL"
   curl -sf "$u/" | grep -q '通讯地址' && echo "$u landing OK" || echo "$u landing FAIL"
@@ -250,4 +250,4 @@ Expected: 十行全 OK。任一 FAIL 即回滚 nginx location 并排查。
 
 ## Critic r1 修订记录（2026-09-30）
 
-C1 sed 量化符 `+`→`(\.[0-9.]+)?`（裸前缀 `203.0.113.10.` 反引号相邻处不替换→门禁必 abort）；I2 门禁与 sed 扩到裸前缀；I3 push 前门禁补 192.0.2.x/192.0.2.x 并与测试共用清单、abort 时清导出树；I4 nginx 仅 443 块加 location（80 块重定向保持）；M dead cdn-ref 断言删除、补固定宽度禁令；缺失项 §8.3/§8.4 归入上线清单人工验收。
+C1 sed 量化符 `+`→`(\.[0-9.]+)?`（裸前缀 `221.200.` 反引号相邻处不替换→门禁必 abort）；I2 门禁与 sed 扩到裸前缀；I3 push 前门禁补 100.107/100.117 并与测试共用清单、abort 时清导出树；I4 nginx 仅 443 块加 location（80 块重定向保持）；M dead cdn-ref 断言删除、补固定宽度禁令；缺失项 §8.3/§8.4 归入上线清单人工验收。

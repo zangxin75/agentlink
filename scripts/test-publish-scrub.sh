@@ -6,7 +6,7 @@ bash scripts/publish-public.sh || { echo "publish script failed"; exit 1; }
 TREE=/tmp/agentlink-public-export
 FAIL=0
 # 门禁清单（spec §7）：真实凭据与拓扑零命中——与 publish-public.sh 共用同一清单（下方以变量复制保持同步）
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
 if grep -rEn "$PATTERNS" "$TREE" --exclude-dir=.git -q; then
   echo "LEAK FOUND:"; grep -rEn "$PATTERNS" "$TREE" --exclude-dir=.git | head -20; FAIL=1
 fi

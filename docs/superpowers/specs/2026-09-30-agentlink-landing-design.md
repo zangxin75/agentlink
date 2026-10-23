@@ -93,7 +93,7 @@ EN 同构五条。
 - **新公开仓库**承载对外形象：`github.com/zangxin75/agentlink`（干净 squash 历史）；现有私有仓库改名为 `agentlink-dev` 继续日常开发
 - **历史清洗**：公开内容 = 当前 main 的快照，squash 为单个初始提交（`feat: AgentLink v1.1`）；清洗动作：
   - `docs/deploy.md` 与 spec/plan 中真实公网 IP、域名、frp 拓扑替换为占位（`203.0.113.x` / `im.example.com`），真实拓扑只留在私有仓库
-  - 扫描整个待公开树：凭据类字符串（`al_`、`wl_`、密码、真实 IP 段 `203.0.113.10`/`203.0.113.20`/`203.0.113.30`、`im.example.com`）零命中才可导出
+  - 扫描整个待公开树：凭据类字符串（`al_`、`wl_`、密码、真实 IP 段 `221.200`/`124.95`/`49.233`、`tokeneff.com`）零命中才可导出
   - `.superpowers/`（SDD 账目）不入公开仓库；`docs/superpowers/` 的 spec/plan 保留（去敏后）
 - **同步机制**：私有仓库根放 `scripts/publish-public.sh`——导出工作树 → 应用去敏替换（sed 清单与发布同源）→ squash 提交 → push 公开仓库；以后每次发布跑一遍
 - 页脚与「自己部署」CTA 链接公开仓库

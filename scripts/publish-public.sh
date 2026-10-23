@@ -14,27 +14,27 @@ rm -rf "$EXPORT/docs/promotion"           # 推广运营素材，私有不入公
 # 去敏替换（sed 清单——真实拓扑仅存于本私有仓库与 165）
 # 白名单保护：im.tokeneff.com（CF 橙云，海外入口）允许出现在公开仓（README 官网链接）——
 # 先占位，全量去敏与门禁跑完后再还原（beechat./agentlink./a2amarket. 等灰云域名仍被清洗）
-grep -rlE 'im\.im.example.com' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/im\.im.example.com/im.tokeneff.com/g'
+grep -rlE 'im\.tokeneff\.com' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/im\.tokeneff\.com/__IM_DOMAIN__/g'
 # 去敏替换（sed 清单与门禁同源——裸前缀也算命中，覆盖 spec/plan 文档中的裸段提及）
-grep -rlE '203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com' "$EXPORT" --exclude-dir=.git |
+grep -rlE '221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com' "$EXPORT" --exclude-dir=.git |
   xargs -r sed -i -E \
-    -e 's/203.0.113.10(\.[0-9.]+)?/203.0.113.10/g' \
-    -e 's/203.0.113.20(\.[0-9.]+)?/203.0.113.20/g' \
-    -e 's/203.0.113.30(\.[0-9.]+)?/203.0.113.30/g' \
+    -e 's/221\.200(\.[0-9.]+)?/203.0.113.10/g' \
+    -e 's/124\.95(\.[0-9.]+)?/203.0.113.20/g' \
+    -e 's/49\.233(\.[0-9.]+)?/203.0.113.30/g' \
     -e 's/100\.(107|117)(\.[0-9.]+)?/192.0.2.x/g' \
-    -e 's/([a-z0-9-]+\.)?im.example.com/im.example.com/g'
-# 第二遍：转义字面量（spec/plan/脚本里作为正则出现的 `203.0.113.10` 等形式——门禁正则不命中但同样暴露前缀）
-grep -rlF '203.0.113.10' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/221\\.200/203.0.113.10/g'
-grep -rlF '203.0.113.20' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/124\\.95/203.0.113.20/g'
-grep -rlF '203.0.113.30' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/49\\.233/203.0.113.30/g'
-grep -rlF '192.0.2.107' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/100\\.107/192.0.2.107/g'
-grep -rlF '192.0.2.117' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/100\\.117/192.0.2.117/g'
-grep -rlF 'im.example.com' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/tokeneff\\.com/im.example.com/g'
+    -e 's/([a-z0-9-]+\.)?tokeneff\.com/im.example.com/g'
+# 第二遍：转义字面量（spec/plan/脚本里作为正则出现的 `221\.200` 等形式——门禁正则不命中但同样暴露前缀）
+grep -rlF '221\.200' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/221\\.200/203.0.113.10/g'
+grep -rlF '124\.95' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/124\\.95/203.0.113.20/g'
+grep -rlF '49\.233' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/49\\.233/203.0.113.30/g'
+grep -rlF '100\.107' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/100\\.107/192.0.2.107/g'
+grep -rlF '100\.117' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/100\\.117/192.0.2.117/g'
+grep -rlF 'tokeneff\.com' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/tokeneff\\.com/im.example.com/g'
 # 注意：本脚本自身的 PATTERNS 行在上面的第二遍中会被自改写——这是有意的自清洗；
 # 但 sed/grep 的调用参数（命令行里）不受影响，门禁在下一次发布时仍完整工作。
 # 推送前自检（同一清单；失败即 abort，防误推）
-# 门禁 PATTERNS 必须与 sed 清单同源；脚本自身用转义形式（203.0.113.10）以避开自身被替换（rev-t2 I2）
-PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|203.0.113.10|203.0.113.20|203.0.113.30|192.0.2.107|192.0.2.117|im.example.com'
+# 门禁 PATTERNS 必须与 sed 清单同源；脚本自身用转义形式（221\.200）以避开自身被替换（rev-t2 I2）
+PATTERNS='al_[A-Za-z0-9]{20,}|wl_[A-Za-z0-9]{20,}|registration_code"?\s*[:=]\s*"?[0-9a-f]{16,}|221\.200|124\.95|49\.233|100\.107|100\.117|tokeneff\.com'
 if grep -rEn "$PATTERNS" "$EXPORT" --exclude-dir=.git -q; then
   echo "ABORT: sensitive strings remain:" >&2
   grep -rEn "$PATTERNS" "$EXPORT" --exclude-dir=.git | head >&2
@@ -42,15 +42,15 @@ if grep -rEn "$PATTERNS" "$EXPORT" --exclude-dir=.git -q; then
   exit 1
 fi
 # 转义形式门禁（第二遍的兜底）
-if grep -rlF '203.0.113.10' "$EXPORT" --exclude-dir=.git >/dev/null 2>&1 || \
-   grep -rlF 'im.example.com' "$EXPORT" --exclude-dir=.git >/dev/null 2>&1; then
+if grep -rlF '221\.200' "$EXPORT" --exclude-dir=.git >/dev/null 2>&1 || \
+   grep -rlF 'tokeneff\.com' "$EXPORT" --exclude-dir=.git >/dev/null 2>&1; then
   echo "ABORT: escaped-literal sensitive strings remain:" >&2
-  grep -rlF '203.0.113.10' "$EXPORT" --exclude-dir=.git | head >&2
+  grep -rlF '221\.200' "$EXPORT" --exclude-dir=.git | head >&2
   rm -rf "$EXPORT"
   exit 1
 fi
 # 门禁通过后还原白名单域名（README 官网链接以 im.tokeneff.com 露出）
-grep -rl 'im.tokeneff.com' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/im.tokeneff.com/im.tokeneff.com/g'
+grep -rl '__IM_DOMAIN__' "$EXPORT" --exclude-dir=.git 2>/dev/null | xargs -r sed -i 's/__IM_DOMAIN__/im.tokeneff.com/g'
 git -C "$EXPORT" init -q && git -C "$EXPORT" add -A
 git -C "$EXPORT" -c user.name=kt -c user.email=kt@localhost commit -qm "feat: AgentLink v1.1 — self-hosted messaging & task server for AI agents
 

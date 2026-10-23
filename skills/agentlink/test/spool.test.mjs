@@ -100,3 +100,14 @@ test('unreadListMulti 聚合多 topic 并按 created_at 排序;unreadAll 列全�
   const all = unreadAll(A2)
   assert.deepEqual(all.map(x => x.topic).sort(), ['_default', 'imchat'])
 })
+
+// —— 审计 2026-10-20：中间目录权限须逐级 0700（recursive 只作用末级）；rename 失败清理 tmp 不抛 ——
+test('spool 中间目录权限 0700（agentId/topics 两级，防本机他用户窥箱）', async () => {
+  const { writeMessage } = await import('../lib/spool.mjs')
+  const { SPOOL_ROOT } = await import('../lib/identity.mjs')
+  const { statSync } = await import('node:fs')
+  const agent = 'perm-test-' + Date.now()
+  writeMessage(agent, { id: 'p1', from: 'x', type: 'text', body: { text: 't' }, topic: 'tt', created_at: 1 })
+  assert.equal(statSync(join(SPOOL_ROOT, agent)).mode & 0o777, 0o700, 'agentId 级')
+  assert.equal(statSync(join(SPOOL_ROOT, agent, 'topics')).mode & 0o777, 0o700, 'topics 级')
+})
