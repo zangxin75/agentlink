@@ -48,6 +48,10 @@ export class WsHub {
   }
 
   private onConnection(socket: WebSocket): void {
+    // 恶意/异常帧（如超 maxPayload 的大帧）会使 ws 在 socket 上 emit 'error'——EventEmitter
+    // 无 'error' 监听即抛 uncaught 击穿整个进程。挂空处理器吞掉即可：ws 随后会自行
+    // close(1009)，'close' 钩子照常做会话清理（审计 2026-10-21 的 maxPayload 加固配套）
+    socket.on('error', () => {})
     let session: Session | null = null
     const authTimer = setTimeout(() => { if (!session) socket.close(4001, 'auth timeout') }, 10_000)
     socket.on('message', raw => {
